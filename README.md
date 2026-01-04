@@ -5,7 +5,7 @@
 **What remains the same?**
 
 - Single cell
-- $N$ Users uniformly sampled from a grid on a plane at 1.5m height.
+- $N$ Users uniformly sampled on grid parallel to the ground at 1.5m height.
 - Post process channels and filter-out blocked channels, resulting in valid users.
 - Different environments with varying density/height of scatterers.
 
