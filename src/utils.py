@@ -1,22 +1,22 @@
-import json
 import numpy as np
+import logging
 
+logger = logging.getLogger(__name__)
 
-def load_building_positions(building_positions_path):
-    """loads building positions from .json file at building_positions_path"""
-    with open(building_positions_path, 'r') as f:
-        return json.load(f)
-
-def get_antenna_positions(building_positions, scene_center=[0.0, 0.0], antenna_height_offset=10.0, shift_factor=0.5, num_deployment_buildings=1):
+def get_antenna_positions(
+    building_positions, 
+    scene_center=[0.0, 0.0],
+    antenna_height_offset=10.0,
+    num_deployment_buildings=1):
     """
-    Find the highest building(s) and calculate heuristic-based antenna positions on the rooftops
-    to minimize self-shadowing by shifting towards scene center.
+    Find the highest building(s) and calculate antenna positions on the rooftops.
+    The antenna is placed at the rooftop vertex closest to the scene center to minimize
+    self-shadowing (the building mass is maximally behind the antenna).
     
     Args:
-        building_positions: Dictionary of building data
-        scene_center: Scene center coordinates [x, y] (from ground/scene bounds, not buildings). Defaults to [0.0, 0.0]
+        building_positions: Dictionary of building data (must include 'rooftop_vertices')
+        scene_center: Scene center coordinates [x, y]. Defaults to [0.0, 0.0]
         antenna_height_offset: Height offset for antenna above rooftop (meters)
-        shift_factor: Factor controlling shift towards center
         num_deployment_buildings: Number of buildings to deploy antennas on (default 1)
         
     Returns:
@@ -40,28 +40,23 @@ def get_antenna_positions(building_positions, scene_center=[0.0, 0.0], antenna_h
     for i in range(num_buildings):
         building_id, building_data = sorted_buildings[i]
         
-        # Extract building data
-        centroid = building_data['centroid']
-        min_bounds = building_data['min']
         max_bounds = building_data['max']
-        dimensions = building_data['dimensions']
+        rooftop_vertices = building_data.get('rooftop_vertices')
         
-        # Direction vector from centroid to scene center (normalized)
-        dx = scene_center[0] - centroid[0]
-        dy = scene_center[1] - centroid[1]
-        direction_length = (dx**2 + dy**2)**0.5
-        if direction_length > 0:
-            dx /= direction_length
-            dy /= direction_length
+        if rooftop_vertices is not None and len(rooftop_vertices) > 0:
+            # Find the actual rooftop vertex closest to scene center
+            distances = (rooftop_vertices[:, 0] - scene_center[0])**2 + \
+                        (rooftop_vertices[:, 1] - scene_center[1])**2
+            closest_idx = np.argmin(distances)
+            antenna_x = float(rooftop_vertices[closest_idx, 0])
+            antenna_y = float(rooftop_vertices[closest_idx, 1])
+        else:
+            # Fallback to centroid if no rooftop vertices available
+            antenna_x = building_data['centroid'][0]
+            antenna_y = building_data['centroid'][1]
+            logger.warning(f"No rooftop vertices found for building {building_id}, using centroid instead")
         
-        # Shift magnitude based on roof size
-        roof_size = (dimensions[0] + dimensions[1]) / 2
-        shift_magnitude = roof_size * shift_factor
-        
-        # Calculate antenna position (shifted towards center, clamped to roof bounds)
-        antenna_x = max(min_bounds[0], min(max_bounds[0], centroid[0] + dx * shift_magnitude))
-        antenna_y = max(min_bounds[1], min(max_bounds[1], centroid[1] + dy * shift_magnitude))
-        antenna_z = centroid[2] + antenna_height_offset
+        antenna_z = max_bounds[2] + antenna_height_offset
         
         results.append((building_id, [antenna_x, antenna_y, antenna_z]))
     
@@ -114,7 +109,7 @@ def _extract_vertices_from_mi_mesh(mi_mesh):
         
         return vertices
     except Exception as e:
-        print(f"Warning: Could not extract vertices from mesh: {e}")
+        logger.warning(f"Warning: Could not extract vertices from mesh: {e}")
         return None
 
 
@@ -167,6 +162,33 @@ def _compute_stats_from_vertices(vertices):
     }
 
 
+def _extract_rooftop_vertices(vertices, z_tolerance=0.5):
+    """
+    Extract vertices that are at the rooftop level (highest z values).
+    
+    Args:
+        vertices: numpy array of shape (N, 3) with vertex positions
+        z_tolerance: tolerance in meters for considering a vertex as "on the rooftop"
+        
+    Returns:
+        numpy.ndarray: Array of rooftop vertices with shape (M, 2) containing only x, y coords,
+                       or None if no vertices found
+    """
+    if vertices is None or len(vertices) == 0:
+        return None
+    
+    max_z = np.max(vertices[:, 2])
+    # Get vertices within tolerance of the max z (rooftop level)
+    rooftop_mask = vertices[:, 2] >= (max_z - z_tolerance)
+    rooftop_vertices = vertices[rooftop_mask]
+    
+    if len(rooftop_vertices) == 0:
+        return None
+    
+    # Return only x, y coordinates (z is the rooftop height)
+    return rooftop_vertices[:, :2]
+
+
 def extract_building_positions_from_scene(scene):
     """
     Extract building positions and statistics directly from a loaded Sionna scene.
@@ -180,10 +202,10 @@ def extract_building_positions_from_scene(scene):
             'min': [x, y, z],
             'max': [x, y, z],
             'dimensions': [width, depth, height],
+            'rooftop_vertices': numpy array of shape (M, 2) with x, y coords of rooftop vertices,
             'has_rooftop': bool,
             'has_wall': bool
         }
-        Same structure as load_building_positions() returns.
     """
     building_data = {}
     
@@ -251,12 +273,16 @@ def extract_building_positions_from_scene(scene):
         # Compute statistics
         stats = _compute_stats_from_vertices(vertices)
         
+        # Extract rooftop vertices for antenna placement
+        rooftop_vertices = _extract_rooftop_vertices(vertices)
+        
         if stats:
             building_data[building_id] = {
                 'centroid': stats['centroid'],
                 'min': stats['min'],
                 'max': stats['max'],
                 'dimensions': stats['dimensions'],
+                'rooftop_vertices': rooftop_vertices,
                 'has_rooftop': 'rooftop' in parts,
                 'has_wall': 'wall' in parts
             }
