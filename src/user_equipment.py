@@ -1,6 +1,13 @@
+"""
+User Equipment (UE) utilities for Sionna RT channel generation.
+
+This module provides config-driven generation of UE parameters (orientations, velocities)
+for batch data generation pipelines.
+"""
+
 import numpy as np
-from sionna.rt import PlanarArray, Receiver
-from typing import List, Tuple
+from sionna.rt import PlanarArray
+from typing import List, Tuple, Optional
 
 
 def set_rx_antenna_array(
@@ -40,26 +47,13 @@ def set_rx_antenna_array(
     -------
     PlanarArray
         The created antenna array object
-        
-    Examples
-    --------
-    Set up standard UE array:
-    >>> set_user_antenna_array(scene, num_rows=2, num_cols=2)
-    
-    Set up single antenna for IoT:
-    >>> set_user_antenna_array(scene, num_rows=1, num_cols=1, pattern="iso")
-    
-    Set up advanced UE array:
-    >>> set_user_antenna_array(scene, num_rows=2, num_cols=4, pattern="hw_dipole")
     """
-    # Check if array already exists
     if hasattr(scene, 'rx_array') and scene.rx_array is not None and not force_overwrite:
         raise ValueError(
             "rx_array already exists on scene. Use force_overwrite=True to replace it, "
             "or skip this call if you want to use the existing array configuration."
         )
     
-    # Create antenna array
     antenna_array = PlanarArray(
         num_rows=num_rows,
         num_cols=num_cols,
@@ -69,10 +63,8 @@ def set_rx_antenna_array(
         polarization=polarization
     )
     
-    # Set on scene
     scene.rx_array = antenna_array
     
-    # Calculate total elements for reporting
     total_elements = num_rows * num_cols * 2 if polarization in ["cross", "VH"] else num_rows * num_cols
     
     print(f"UE Antenna Array Configuration Set:")
@@ -83,245 +75,230 @@ def set_rx_antenna_array(
     return antenna_array
 
 
-def add_user(
-    scene,
-    name: str,
-    position: List[float],
-    # Mobility characteristics
-    mobility_state: str = "pedestrian",  # "pedestrian", "vehicular"
-    # Display options
-    display_radius: float = 0.5,
-    color: Tuple[float, float, float] = (0.0, 0.0, 1.0),  # Blue for users
-) -> Receiver:
+def generate_random_orientations(
+    num_ues: int,
+    seed: int = None
+) -> np.ndarray:
     """
-    Add a user equipment (UE) receiver to a Sionna scene for downlink simulation.
-    All devices are assumed to be handheld with characteristics determined by mobility state.
+    Generate random orientations for a batch of user equipments.
     
-    Note: You must call set_user_antenna_array() before adding users to configure
-    the antenna array that all users will share.
+    Simulates handheld device orientations with:
+    - Yaw (azimuth): uniform [0, 2π]
+    - Pitch: ±30° (device tilted up/down)
+    - Roll: ±45° (device rotated in hand)
     
     Parameters
     ----------
-    scene : sionna.rt.Scene
-        The Sionna scene to add the user to
-    name : str
-        Name for the user receiver
-    position : List[float]
-        3D position [x, y, z] in meters
-    mobility_state : str, default="pedestrian"
-        Mobility classification determining velocity and orientation:
-        - "pedestrian": random velocity 0.5-2 m/s, random orientation
-        - "vehicular": random velocity 8-30 m/s, fixed orientation
-    display_radius : float, default=0.5
-        Display radius for visualization
-    color : Tuple[float, float, float], default=(0.0, 0.0, 1.0)
-        Color for visualization (RGB values 0.0-1.0)
+    num_ues : int
+        Number of UEs to generate orientations for
+    seed : int, optional
+        Random seed for reproducibility
     
     Returns
     -------
-    Receiver
-        Single receiver object for the UE
+    np.ndarray
+        Array of orientations with shape (num_ues, 3) where each row is 
+        [roll, pitch, yaw] in radians following Sionna's convention
         
     Examples
     --------
-    First set the UE antenna array configuration:
-    >>> set_user_antenna_array(scene, num_rows=2, num_cols=2, pattern="iso")
-    
-    Then add users:
-    >>> user1 = add_user(scene, "User_001", [50, 100, 1.5])
-    >>> user2 = add_user(scene, "User_002", [200, 300, 1.6])
-    
-    Add high-mobility user (e.g., in vehicle):
-    >>> user3 = add_user(scene, "User_003", [500, 400, 1.8], mobility_state="vehicular")
+    >>> orientations = generate_random_orientations(100, seed=42)
     """
+    if seed is not None:
+        np.random.seed(seed)
     
-    # Check that rx_array has been set
-    if not hasattr(scene, 'rx_array') or scene.rx_array is None:
+    yaw = np.random.uniform(0, 2 * np.pi, num_ues)
+    pitch = np.random.uniform(-np.pi / 6, np.pi / 6, num_ues)  # ±30°
+    roll = np.random.uniform(-np.pi / 4, np.pi / 4, num_ues)   # ±45°
+    
+    return np.stack([roll, pitch, yaw], axis=1)
+
+
+def generate_ue_velocities(
+    num_ues: int,
+    speed_distribution: str = None,
+    direction_mode: str = "random",
+    speed_constant: float = 1.0,
+    speed_min: float = 0.5,
+    speed_max: float = 2.0,
+    speed_values: List[float] = None,
+    fixed_direction: float = 0.0,
+    seed: int = None
+) -> np.ndarray:
+    """
+    Generate velocities for a batch of user equipments with configurable distributions.
+    
+    Parameters
+    ----------
+    num_ues : int
+        Number of UEs to generate velocities for
+    speed_distribution : str, optional
+        Speed distribution type:
+        - None: All UEs have zero velocity (stationary)
+        - "constant": All UEs have the same speed (speed_constant)
+        - "uniform_continuous": Speed uniform in [speed_min, speed_max]
+        - "uniform_discrete": Speed uniformly sampled from speed_values list
+        - "pedestrian": Predefined 0.5-2 m/s range
+        - "vehicular": Predefined 8-30 m/s range
+    direction_mode : str, default="random"
+        Direction mode:
+        - "random": Random direction for each UE (uniform [0, 2π])
+        - "fixed": All UEs move in fixed_direction
+    speed_constant : float, default=1.0
+        Speed value when speed_distribution="constant"
+    speed_min : float, default=0.5
+        Minimum speed for uniform_continuous distribution
+    speed_max : float, default=2.0
+        Maximum speed for uniform_continuous distribution
+    speed_values : List[float], optional
+        List of speed values for uniform_discrete distribution
+    fixed_direction : float, default=0.0
+        Direction angle in radians when direction_mode="fixed"
+    seed : int, optional
+        Random seed for reproducibility
+    
+    Returns
+    -------
+    np.ndarray
+        Array of velocities with shape (num_ues, 3) where each row is [vx, vy, vz]
+        
+    Examples
+    --------
+    Stationary UEs:
+    >>> velocities = generate_ue_velocities(100, speed_distribution=None)
+    
+    Pedestrian speeds with random direction:
+    >>> velocities = generate_ue_velocities(100, speed_distribution="pedestrian")
+    
+    Constant speed, fixed direction (all moving east):
+    >>> velocities = generate_ue_velocities(
+    ...     100, speed_distribution="constant", speed_constant=5.0,
+    ...     direction_mode="fixed", fixed_direction=0.0
+    ... )
+    """
+    if seed is not None:
+        np.random.seed(seed)
+    
+    # Stationary UEs
+    if speed_distribution is None:
+        return np.zeros((num_ues, 3))
+    
+    # Generate speeds
+    if speed_distribution == "constant":
+        speeds = np.full(num_ues, speed_constant)
+    elif speed_distribution == "uniform_continuous":
+        speeds = np.random.uniform(speed_min, speed_max, num_ues)
+    elif speed_distribution == "uniform_discrete":
+        if speed_values is None or len(speed_values) == 0:
+            raise ValueError("speed_values required for uniform_discrete distribution")
+        speeds = np.random.choice(speed_values, num_ues)
+    elif speed_distribution == "pedestrian":
+        speeds = np.random.uniform(0.5, 2.0, num_ues)
+    elif speed_distribution == "vehicular":
+        speeds = np.random.uniform(8.0, 30.0, num_ues)
+    else:
         raise ValueError(
-            "No rx_array configured on scene. Call set_user_antenna_array() first to "
-            "configure the antenna array that all users will share."
+            f"Unknown speed_distribution '{speed_distribution}'. "
+            f"Must be None, 'constant', 'uniform_continuous', 'uniform_discrete', "
+            f"'pedestrian', or 'vehicular'"
         )
     
-    # Input validation
-    if len(position) != 3:
-        raise ValueError("Position must be [x, y, z]")
+    # Generate directions
+    if direction_mode == "random":
+        directions = np.random.uniform(0, 2 * np.pi, num_ues)
+    elif direction_mode == "fixed":
+        directions = np.full(num_ues, fixed_direction)
+    else:
+        raise ValueError(
+            f"Unknown direction_mode '{direction_mode}'. Must be 'random' or 'fixed'"
+        )
     
-    # Calculate device orientation based on mobility state
-    # Pedestrian -> random orientation, Vehicular -> fixed orientation
-    orientation = _calculate_ue_orientation(mobility_state)
+    # Convert to velocity vectors (horizontal plane, vz=0)
+    vx = speeds * np.cos(directions)
+    vy = speeds * np.sin(directions)
+    vz = np.zeros(num_ues)
     
-    # Calculate velocity based on mobility state
-    velocity = _calculate_velocity(mobility_state)
+    return np.stack([vx, vy, vz], axis=1)
+
+
+def generate_ue_parameters(
+    num_ues: int,
+    orientation_mode: str = "random",
+    speed_distribution: str = None,
+    direction_mode: str = "random",
+    speed_constant: float = 1.0,
+    speed_min: float = 0.5,
+    speed_max: float = 2.0,
+    speed_values: List[float] = None,
+    fixed_direction: float = 0.0,
+    seed: int = None
+) -> Tuple[Optional[np.ndarray], np.ndarray]:
+    """
+    Generate orientations and velocities for a batch of UEs.
     
-    # Create receiver
-    rx = Receiver(
-        name=name,
-        position=position,
-        orientation=orientation,
-        velocity=velocity,
-        display_radius=display_radius,
-        color=color
+    Parameters
+    ----------
+    num_ues : int
+        Number of UEs
+    orientation_mode : str, default="random"
+        Orientation mode:
+        - "random": Returns random orientations array
+        - "to_tx": Returns None (use Sionna's look_at parameter instead)
+    speed_distribution : str, optional
+        Speed distribution (see generate_ue_velocities)
+    direction_mode : str, default="random"
+        Direction mode: "random" or "fixed"
+    speed_constant, speed_min, speed_max, speed_values, fixed_direction
+        Speed distribution parameters (see generate_ue_velocities)
+    seed : int, optional
+        Random seed for reproducibility
+    
+    Returns
+    -------
+    Tuple[Optional[np.ndarray], np.ndarray]
+        - orientations: (num_ues, 3) array of [roll, pitch, yaw], or None if "to_tx"
+        - velocities: (num_ues, 3) array of [vx, vy, vz]
+        
+    Examples
+    --------
+    Random orientations, stationary:
+    >>> orientations, velocities = generate_ue_parameters(100, seed=42)
+    
+    Random orientations, pedestrian speeds:
+    >>> orientations, velocities = generate_ue_parameters(
+    ...     100, orientation_mode="random", speed_distribution="pedestrian", seed=42
+    ... )
+    
+    To-TX orientation (use look_at when creating Receivers):
+    >>> orientations, velocities = generate_ue_parameters(
+    ...     100, orientation_mode="to_tx", speed_distribution="pedestrian", seed=42
+    ... )
+    >>> # orientations is None - use look_at parameter instead:
+    >>> rx = Receiver(name="UE", position=pos, look_at=scene.get("BS_0"), velocity=velocities[i])
+    """
+    # Generate orientations
+    if orientation_mode == "random":
+        orientations = generate_random_orientations(num_ues, seed=seed)
+    elif orientation_mode == "to_tx":
+        # Delegate to Sionna's look_at - return None
+        orientations = None
+    else:
+        raise ValueError(
+            f"Unknown orientation_mode '{orientation_mode}'. Must be 'random' or 'to_tx'"
+        )
+    
+    # Generate velocities (use seed+1 to avoid correlation)
+    velocity_seed = seed + 1 if seed is not None else None
+    velocities = generate_ue_velocities(
+        num_ues=num_ues,
+        speed_distribution=speed_distribution,
+        direction_mode=direction_mode,
+        speed_constant=speed_constant,
+        speed_min=speed_min,
+        speed_max=speed_max,
+        speed_values=speed_values,
+        fixed_direction=fixed_direction,
+        seed=velocity_seed
     )
     
-    # Add to scene
-    scene.add(rx)
-    
-    print(f"Added receiver '{name}' at position {position}")
-    
-    # Print brief summary
-    velocity_magnitude = np.linalg.norm(velocity)
-    print(f"  - Mobility: {mobility_state}, Velocity: {velocity_magnitude:.2f} m/s")
-    
-    return rx
-
-
-def _calculate_ue_orientation(mobility_state: str) -> List[float]:
-    """
-    Calculate UE orientation based on mobility state.
-    
-    Parameters
-    ----------
-    mobility_state : str
-        Either "pedestrian" or "vehicular"
-    
-    Returns
-    -------
-    List[float]
-        Orientation [roll, pitch, azimuth] in radians
-    """
-    if mobility_state == "pedestrian":
-        # Random orientation for handheld devices (pedestrians)
-        azimuth = np.random.uniform(0, 2*np.pi)
-        pitch = np.random.uniform(-np.pi/6, np.pi/6)  # ±30° tilt
-        roll = np.random.uniform(-np.pi/4, np.pi/4)   # ±45° roll
-        
-    elif mobility_state == "vehicular":
-        # Fixed orientation for vehicle-mounted devices
-        azimuth = pitch = roll = 0.0
-        
-    else:
-        # Default to pedestrian
-        azimuth = np.random.uniform(0, 2*np.pi)
-        pitch = np.random.uniform(-np.pi/6, np.pi/6)
-        roll = np.random.uniform(-np.pi/4, np.pi/4)
-    
-    return [roll, pitch, azimuth]
-
-
-def _calculate_velocity(mobility_state: str) -> List[float]:
-    """
-    Calculate random 3D velocity vector based on mobility state.
-    
-    Parameters
-    ----------
-    mobility_state : str
-        Either "pedestrian" or "vehicular"
-        - pedestrian: 0.5-2 m/s (1.8-7.2 km/h)
-        - vehicular: 8-30 m/s (28.8-108 km/h)
-    
-    Returns
-    -------
-    List[float]
-        3D velocity vector [vx, vy, vz] in m/s
-    """
-    if mobility_state == "pedestrian":
-        # Pedestrian velocity: 0.5 - 2 m/s (1.8 - 7.2 km/h)
-        speed = np.random.uniform(0.5, 2.0)
-    elif mobility_state == "vehicular":
-        # Vehicular velocity: 8 - 30 m/s (28.8 - 108 km/h)
-        speed = np.random.uniform(8.0, 30.0)
-    else:
-        # Default to pedestrian
-        speed = np.random.uniform(0.5, 2.0)
-    
-    # Random horizontal direction (azimuth)
-    azimuth = np.random.uniform(0, 2*np.pi)
-    
-    # Calculate velocity components (assume motion in horizontal plane)
-    vx = speed * np.cos(azimuth)
-    vy = speed * np.sin(azimuth)
-    vz = 0.0  # No vertical motion
-    
-    return [vx, vy, vz]
-
-
-# Convenience functions for common mobility types
-
-def add_pedestrian(scene, name: str, position: List[float], **kwargs) -> Receiver:
-    """
-    Add a pedestrian user with typical parameters.
-    Uses pedestrian mobility: random orientation and velocity 0.5-2 m/s.
-    """
-    defaults = {
-        'mobility_state': 'pedestrian', 
-        'color': (0.0, 0.0, 1.0)  # Blue for pedestrian
-    }
-    defaults.update(kwargs)
-    return add_user(scene, name, position, **defaults)
-
-
-def add_vehicular(scene, name: str, position: List[float], **kwargs) -> Receiver:
-    """
-    Add a vehicular user with typical parameters.
-    Uses vehicular mobility: fixed orientation and velocity 8-30 m/s.
-    """
-    defaults = {
-        'mobility_state': 'vehicular',
-        'color': (1.0, 1.0, 0.0)  # Yellow for vehicular
-    }
-    defaults.update(kwargs)
-    return add_user(scene, name, position, **defaults)
-
-
-# Utility function for adding multiple users
-def add_multiple_users(scene, user_configs: List[dict]) -> List[Receiver]:
-    """
-    Add multiple users to scene with different configurations.
-    
-    Note: set_user_antenna_array() must be called before this function.
-    
-    Parameters
-    ----------
-    scene : sionna.rt.Scene
-        Scene to add users to
-    user_configs : List[dict]
-        List of user configuration dictionaries
-        Each dict should have: name, position, and optional parameters
-        mobility_state: "pedestrian" or "vehicular"
-    
-    Returns
-    -------
-    List[Receiver]
-        List of all created receivers
-        
-    Examples
-    --------
-    First set the antenna array:
-    >>> set_user_antenna_array(scene, num_rows=2, num_cols=2)
-    
-    Then add multiple users:
-    >>> users = add_multiple_users(scene, [
-    ...     {"name": "User_001", "position": [100, 200, 1.5]},
-    ...     {"name": "User_002", "position": [150, 250, 1.6]},
-    ...     {"name": "User_003", "position": [300, 400, 1.8], "mobility_state": "vehicular"}
-    ... ])
-    """
-    
-    # Check that rx_array has been set
-    if not hasattr(scene, 'rx_array') or scene.rx_array is None:
-        raise ValueError(
-            "No rx_array configured on scene. Call set_user_antenna_array() first."
-        )
-    
-    receivers = []
-    
-    for config in user_configs:
-        name = config.pop('name')
-        position = config.pop('position')
-        
-        # Add user with remaining config as kwargs
-        rx = add_user(scene, name, position, **config)
-        receivers.append(rx)
-    
-    print(f"\nAdded {len(receivers)} users to scene with shared antenna array")
-    return receivers
+    return orientations, velocities

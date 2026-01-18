@@ -1,4 +1,5 @@
 import numpy as np
+import colorsys
 import logging
 
 logger = logging.getLogger(__name__)
@@ -288,3 +289,128 @@ def extract_building_positions_from_scene(scene):
             }
     
     return building_data
+
+
+def get_building_bounds(building_positions: dict) -> tuple:
+    """
+    Calculate the overall bounding box of all buildings.
+    
+    Args:
+        building_positions: Dictionary from extract_building_positions_from_scene()
+        
+    Returns:
+        tuple: ((min_x, min_y), (max_x, max_y)) or None if no buildings
+    """
+    if not building_positions:
+        return None
+    
+    all_min_x = []
+    all_min_y = []
+    all_max_x = []
+    all_max_y = []
+    
+    for building_id, data in building_positions.items():
+        all_min_x.append(data['min'][0])
+        all_min_y.append(data['min'][1])
+        all_max_x.append(data['max'][0])
+        all_max_y.append(data['max'][1])
+    
+    return (
+        (min(all_min_x), min(all_min_y)),
+        (max(all_max_x), max(all_max_y))
+    )
+
+
+def clip_terrain_to_buildings(scene, building_positions: dict, margin: float = 0.0):
+    """
+    Clip the terrain mesh vertices to the bounding box of buildings.
+    
+    This modifies the terrain mesh in-place by moving out-of-bounds vertices 
+    to the nearest boundary (clamping approach).
+    
+    Args:
+        scene: Sionna scene object
+        building_positions: Dictionary from extract_building_positions_from_scene()
+        margin: Extra margin in meters around the building bounds (default: 0)
+        
+    Returns:
+        bool: True if clipping was performed, False otherwise
+    """
+    import mitsuba as mi
+    
+    bounds = get_building_bounds(building_positions)
+    if bounds is None:
+        logger.warning("No buildings found, cannot clip terrain")
+        return False
+    
+    (min_x, min_y), (max_x, max_y) = bounds
+    min_x -= margin
+    min_y -= margin
+    max_x += margin
+    max_y += margin
+    
+    terrain_obj = scene.objects.get("ground")
+    if terrain_obj is None:
+        logger.warning("No ground object found in scene")
+        return False
+    
+    if not hasattr(terrain_obj, 'mi_mesh'):
+        logger.warning("Ground object is not a mesh")
+        return False
+    
+    mi_mesh = terrain_obj.mi_mesh
+    
+    # Extract vertices
+    vertices = _extract_vertices_from_mi_mesh(mi_mesh)
+    if vertices is None:
+        logger.warning("Could not extract vertices from terrain mesh")
+        return False
+    
+    original_count = len(vertices)
+    
+    # Count vertices outside bounds
+    outside_mask = (
+        (vertices[:, 0] < min_x) | (vertices[:, 0] > max_x) |
+        (vertices[:, 1] < min_y) | (vertices[:, 1] > max_y)
+    )
+    outside_count = np.sum(outside_mask)
+    
+    if outside_count == 0:
+        print(f"Terrain already within building bounds, no clipping needed")
+        return True
+    
+    # Clamp vertices to bounds (move them to boundary instead of removing)
+    vertices[:, 0] = np.clip(vertices[:, 0], min_x, max_x)
+    vertices[:, 1] = np.clip(vertices[:, 1], min_y, max_y)
+    
+    # Update the mesh vertex positions
+    try:
+        params = mi.traverse(mi_mesh)
+        params['vertex_positions'] = mi.Float(vertices.flatten())
+        params.update()
+        
+        print(f"Clipped terrain: clamped {outside_count}/{original_count} vertices to bounds")
+        print(f"  Bounds: x=[{min_x:.1f}, {max_x:.1f}], y=[{min_y:.1f}, {max_y:.1f}]")
+        return True
+        
+    except Exception as e:
+        logger.warning(f"Could not update mesh vertices: {e}")
+        return False
+
+
+def get_tx_color(tx_idx: int, num_txs: int) -> tuple:
+    """
+    Generate distinct color for each TX using HSV color space.
+    
+    Args:
+        tx_idx: Index of the transmitter (0 to num_txs-1)
+        num_txs: Total number of transmitters
+        
+    Returns:
+        tuple: RGB color as (r, g, b) with values in [0, 1]
+    """
+    hue = tx_idx / num_txs  # spread hues evenly
+    saturation = 0.8
+    value = 0.9
+    r, g, b = colorsys.hsv_to_rgb(hue, saturation, value)
+    return (r, g, b)
