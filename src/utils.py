@@ -1,6 +1,7 @@
 import numpy as np
 import colorsys
 import logging
+import matplotlib.pyplot as plt
 
 logger = logging.getLogger(__name__)
 
@@ -414,3 +415,65 @@ def get_tx_color(tx_idx: int, num_txs: int) -> tuple:
     value = 0.9
     r, g, b = colorsys.hsv_to_rgb(hue, saturation, value)
     return (r, g, b)
+
+
+def visualize_complex_channel(h_channel, title="Complex Channel Response"):
+    """
+    Visualize a complex channel frequency response.
+    
+    Creates two side-by-side plots showing magnitude and phase of the channel.
+    Subcarriers are on the y-axis and OFDM symbols on the x-axis.
+    
+    Parameters
+    ----------
+    h_channel : np.ndarray
+        Complex channel array with shape [num_ofdm_symbols, num_subcarriers] or
+        [num_subcarriers, num_ofdm_symbols]. Will be transposed to ensure correct orientation.
+    title : str
+        Title for the plot
+        
+    Examples
+    --------
+    >>> h = paths.cfr(...)  # shape: [users, tx, rx_ant, tx_ant, subcarriers, ofdm_symbols]
+    >>> first_user = h[0, 0, 0, 0, :, :]
+    >>> visualize_complex_channel(first_user, title="First User Channel")
+    """
+    h_channel = np.asarray(h_channel)
+    
+    if h_channel.ndim != 2:
+        raise ValueError(f"Expected 2D array, got shape {h_channel.shape}")
+    
+    # Transpose to ensure: subcarriers on y-axis, OFDM symbols on x-axis
+    # imshow treats first dim as rows (y) and second dim as columns (x)
+    h_channel = h_channel.T  # Now shape is [num_subcarriers, num_ofdm_symbols]
+    num_subcarriers, num_ofdm_symbols = h_channel.shape
+    
+    # Compute magnitude and phase
+    magnitude = np.abs(h_channel)
+    phase = np.angle(h_channel)
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Plot magnitude (subcarriers on y-axis, OFDM symbols on x-axis)
+    im1 = ax1.imshow(magnitude, aspect='auto', origin='lower', cmap='viridis', interpolation='nearest')
+    ax1.set_xlabel('OFDM Symbol Index')
+    ax1.set_ylabel('Subcarrier Index')
+    ax1.set_title(f'{title} - Magnitude')
+    plt.colorbar(im1, ax=ax1, label='|H|')
+    
+    # Plot phase (subcarriers on y-axis, OFDM symbols on x-axis)
+    im2 = ax2.imshow(phase, aspect='auto', origin='lower', cmap='hsv', interpolation='nearest')
+    ax2.set_xlabel('OFDM Symbol Index')
+    ax2.set_ylabel('Subcarrier Index')
+    ax2.set_title(f'{title} - Phase')
+    plt.colorbar(im2, ax=ax2, label='∠H (radians)')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Print statistics
+    print(f"Channel Statistics:")
+    print(f"  Shape: {h_channel.shape} (subcarriers × OFDM symbols)")
+    print(f"  Magnitude: min={np.min(magnitude):.4f}, max={np.max(magnitude):.4f}, mean={np.mean(magnitude):.4f}")
+    print(f"  Phase: range=[{np.min(phase):.4f}, {np.max(phase):.4f}] radians")
