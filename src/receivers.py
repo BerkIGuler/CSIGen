@@ -5,9 +5,12 @@ Receiver creation utilities for adding user equipment to scenes.
 from sionna.rt import Receiver
 import numpy as np
 from typing import Tuple
+import logging
 
 from src.user_equipment import generate_ue_parameters
 from src.utils import get_tx_color
+
+logger = logging.getLogger(__name__)
 
 
 def add_receivers_from_samples(
@@ -48,13 +51,14 @@ def add_receivers_from_samples(
     
     # Convert to numpy once for efficient iteration
     positions = positions_tensor.numpy() if hasattr(positions_tensor, 'numpy') else np.array(positions_tensor)
-    cell_ids = cell_ids_tensor.numpy() if hasattr(cell_ids_tensor, 'numpy') else np.array(cell_ids_tensor)
     
     num_txs, num_users_per_tx, _ = positions.shape
     total_users = num_txs * num_users_per_tx
-    print(f"Total TXs: {num_txs}, Users per TX: {num_users_per_tx}, Total users: {total_users}")
+    logger.info(f"Total TXs: {num_txs}, Users per TX: {num_users_per_tx}, Total users: {total_users}")
     
     # Get config from selected preset and generate UE parameters
+    if mobility_preset not in mobility_presets:
+        raise ValueError(f"Mobility preset '{mobility_preset}' not found in mobility_presets")
     preset_config = mobility_presets[mobility_preset]
     orientation_mode = preset_config.get("orientation_mode", "random")
     
@@ -102,8 +106,8 @@ def add_receivers_from_samples(
             scene.add(rx)
             user_count += 1
     
-    print(f"Added {user_count} receivers to scene")
-    print(f"  - Preset: {mobility_preset}")
-    print(f"  - Orientation: {orientation_mode}, Speed: {preset_config.get('speed_distribution')}")
+    logger.info(f"Added {user_count} receivers to scene")
+    logger.info(f"  - Preset: {mobility_preset}")
+    logger.info(f"  - Orientation: {orientation_mode}, Speed: {preset_config.get('speed_distribution')}")
     
     return num_txs, num_users_per_tx, total_users

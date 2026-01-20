@@ -6,6 +6,9 @@ from sionna.rt import subcarrier_frequencies
 import numpy as np
 from pathlib import Path
 from typing import List, Optional, Dict
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def compute_cfr(
@@ -14,11 +17,11 @@ def compute_cfr(
     num_ofdm_symbols: int,
     subcarrier_spacing: float,
     normalize_delays: bool = True,
-    normalize: bool = True,
+    normalize: bool = False,
     out_type: str = "numpy"
-) -> np.ndarray:
+) -> List[np.ndarray]:
     """
-    Compute Channel Frequency Response (CFR) from paths.
+    Compute Channel Frequency Response (CFR) from paths for each TX.
     
     Parameters
     ----------
@@ -32,17 +35,16 @@ def compute_cfr(
         Spacing between subcarriers in Hz
     normalize_delays : bool, default=True
         Whether to normalize delays in CFR computation
-    normalize : bool, default=True
+    normalize : bool, default=False
         Whether to normalize the CFR
     out_type : str, default="numpy"
         Output type ("numpy" or "tensorflow")
     
     Returns
     -------
-    np.ndarray
-        Combined CFR array with shape [total_users, num_txs, num_rx_ant, num_tx_ant, num_subcarriers, num_ofdm_symbols]
-        Note: When per_tx_users_only=True, this combines results from all TXs.
-        The shape will be [total_users, num_txs, ...] where each TX's users are in their respective positions.
+    List[np.ndarray]
+        List of CFR arrays, one per TX. Each array has shape 
+        [num_selected_users, 1, num_rx_ant, num_tx_ant, num_subcarriers, num_ofdm_symbols]
     """
     frequencies = subcarrier_frequencies(num_subcarriers, subcarrier_spacing)
     ofdm_symbol_duration = 1 / subcarrier_spacing
@@ -62,38 +64,14 @@ def compute_cfr(
         )
         # h_tx shape: [num_selected_users, 1, num_rx_ant, num_tx_ant, num_subcarriers, num_ofdm_symbols]
         cfr_per_tx.append(h_tx)
-        print(f"TX {tx_idx}: CFR shape {h_tx.shape}")
+        logger.info(f"TX {tx_idx}: CFR shape {h_tx.shape}")
     
-    # Combine results from all TXs
-    # Each h_tx has shape [num_selected_users, 1, num_rx_ant, num_tx_ant, num_subcarriers, num_ofdm_symbols]
-    # We need to combine them into [total_users, num_txs, num_rx_ant, num_tx_ant, num_subcarriers, num_ofdm_symbols]
+    # Print dimensions from first TX
+    if cfr_per_tx:
+        num_rxs, num_rx_ant, num_txs, num_tx_ant, num_ofdm_symbols_check, num_subcarriers_check = cfr_per_tx[0].shape
+        logger.info(f"\nCFR shape from PathSolver: [num_users={num_rxs}, num_tx={num_txs}, num_rx_ant={num_rx_ant}, num_tx_ant={num_tx_ant}, num_subcarriers={num_subcarriers_check}, num_ofdm_symbols={num_ofdm_symbols_check}]")
     
-    # Get dimensions from first TX
-    num_selected_users, _, num_rx_ant, num_tx_ant, num_subcarriers_check, num_ofdm_symbols_check = cfr_per_tx[0].shape
-    num_txs = len(cfr_per_tx)
-    total_users = num_selected_users * num_txs  # Assuming per_tx_users_only=True
-    
-    # Initialize combined array
-    h = np.zeros(
-        (total_users, num_txs, num_rx_ant, num_tx_ant, num_subcarriers, num_ofdm_symbols),
-        dtype=cfr_per_tx[0].dtype
-    )
-    
-    # Fill in the combined array
-    for tx_idx, h_tx in enumerate(cfr_per_tx):
-        start_user_idx = tx_idx * num_selected_users
-        end_user_idx = (tx_idx + 1) * num_selected_users
-        
-        # Extract users for this TX: h_tx[start_user_idx:end_user_idx, 0, :, :, :, :]
-        # But h_tx only has num_selected_users, so we slice it directly
-        # h_tx shape: [num_selected_users, 1, num_rx_ant, num_tx_ant, num_subcarriers, num_ofdm_symbols]
-        # We want to place it at h[start_user_idx:end_user_idx, tx_idx, :, :, :, :]
-        h[start_user_idx:end_user_idx, tx_idx, :, :, :, :] = h_tx[:, 0, :, :, :, :]
-    
-    # Print dimensions
-    print(f"\nCFR shape from PathSolver: [num_users={total_users}, num_tx={num_txs}, num_rx_ant={num_rx_ant}, num_tx_ant={num_tx_ant}, num_subcarriers={num_subcarriers}, num_ofdm_symbols={num_ofdm_symbols}]")
-    
-    return h
+    return cfr_per_tx
 
 
 def save_channel_data(

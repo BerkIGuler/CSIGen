@@ -5,6 +5,7 @@ Scene setup utilities for loading and preparing scenes for channel generation.
 from pathlib import Path
 from sionna.rt import load_scene, transform_mesh
 from typing import Tuple, Optional, Any
+import logging
 
 from src.utils import (
     extract_building_positions_from_scene,
@@ -12,6 +13,8 @@ from src.utils import (
     clip_terrain_to_buildings,
     get_building_bounds
 )
+
+logger = logging.getLogger(__name__)
 
 
 def setup_scene(
@@ -60,19 +63,17 @@ def setup_scene(
     Returns
     -------
     tuple
-        (scene, building_positions, measurement_surface, antenna_information)
+          (scene, building_positions, measurement_surface, antenna_information)
         - scene: Loaded Sionna scene object
         - building_positions: Dictionary of building data
         - measurement_surface: Mesh object for measurement surface (None if no elevation)
         - antenna_information: List of (building_id, antenna_position) tuples
     """
-    # Load scene
     scene = load_scene(scene_xml_path, merge_shapes=merge_shapes)
     
     # Set carrier frequency
     scene.frequency = carrier_frequency
     
-    # Extract building positions
     building_positions = extract_building_positions_from_scene(scene)
     
     # Optionally clip terrain to building bounds BEFORE creating measurement surface
@@ -80,10 +81,10 @@ def setup_scene(
         bounds = get_building_bounds(building_positions)
         if bounds:
             (min_x, min_y), (max_x, max_y) = bounds
-            print(f"Building bounds: x=[{min_x:.1f}, {max_x:.1f}], y=[{min_y:.1f}, {max_y:.1f}]")
+            logger.info(f"Building bounds: x=[{min_x:.1f}, {max_x:.1f}], y=[{min_y:.1f}, {max_y:.1f}]")
             clip_terrain_to_buildings(scene, building_positions, margin=terrain_clip_margin)
     
-    # Detect if elevation data is present by checking for ground object
+    # Detect if elevation data is esent by checking for ground object
     terrain_obj = scene.objects.get("ground")
     has_elevation = terrain_obj is not None
     
@@ -92,6 +93,7 @@ def setup_scene(
         measurement_surface = terrain_obj.clone(as_mesh=True)
         transform_mesh(measurement_surface, translation=[0, 0, user_shift_from_ground])
     else:
+        logger.warning("No elevation data found, cannot create measurement surface")
         measurement_surface = None
     
     # Get antenna positions for deployment buildings

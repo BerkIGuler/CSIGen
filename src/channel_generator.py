@@ -205,7 +205,7 @@ def generate_channels(config: Dict) -> Dict:
     
     # Step 8: Compute CFR
     print("\nStep 8: Computing Channel Frequency Response...")
-    h = compute_cfr(
+    cfr_per_tx = compute_cfr(
         paths_per_tx,
         num_subcarriers=config['num_subcarriers'],
         num_ofdm_symbols=config['num_ofdm_symbols'],
@@ -222,14 +222,14 @@ def generate_channels(config: Dict) -> Dict:
         'num_users_per_tx': num_users_per_tx,
         'total_users': total_users,
         'num_sectors': num_sectors,
-        'h_shape': h.shape,
-        'h_dtype': str(h.dtype)
+        'cfr_per_tx_shapes': [h_tx.shape for h_tx in cfr_per_tx],
+        'cfr_per_tx_dtypes': [str(h_tx.dtype) for h_tx in cfr_per_tx]
     }
     
     print("\n✓ Channel generation complete!")
     
     return {
-        'h': h,
+        'cfr_per_tx': cfr_per_tx,
         'metadata': metadata,
         'scene': scene,  # Optional: for inspection
         'radio_map': radio_map  # Optional: for inspection

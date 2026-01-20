@@ -4,6 +4,9 @@ Path solving utilities for efficient per-TX path computation.
 
 from sionna.rt import PathSolver
 from typing import List
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def solve_paths_per_tx(
@@ -28,22 +31,22 @@ def solve_paths_per_tx(
     """
     Solve paths for each TX separately (computationally efficient).
     
-    This function temporarily removes other TXs and non-associated receivers
-    from the scene for each TX to reduce computational load.
+    This function temporarily removes other TXs and if there are any non-associated receivers, they are also removed
+    from the scene for to reduce computational load on ray tracing.
     
     Parameters
     ----------
     scene : sionna.rt.Scene
-        The Sionna scene object with receivers already added
+        The Sionna scene object with transmitters and receivers already added
     num_txs : int
-        Total number of transmitters (sectors)
+        Total number of transmitters (base stations x sectors per base station)
     num_sectors : int
-        Number of sectors per base station
+        Number of sectors per base station (e.g. 1, 3, 6, etc.)
     num_users_per_tx : int
-        Number of users per TX
+        Number of users sampled per TX
     per_tx_users_only : bool, default=True
-        If True, solve paths only for users associated with each TX.
-        If False, solve for all users (but still per TX)
+        If True, solve paths only for users associated with each TX (sampled from the radio map).
+        If False, solve for all users (but still per TX, i.e. all users are associated with each TX)
     max_depth : int, default=5
         Maximum number of ray scene interactions
     max_num_paths_per_src : int, default=10**6
@@ -51,7 +54,7 @@ def solve_paths_per_tx(
     samples_per_src : int, default=10**6
         Number of samples per source
     synthetic_array : bool, default=True
-        Use synthetic array for path computation
+        Use synthetic array for path computation (faster computation time)
     los : bool, default=True
         Include line-of-sight paths
     specular_reflection : bool, default=True
@@ -95,11 +98,11 @@ def solve_paths_per_tx(
             start_idx = tx_idx * num_users_per_tx
             end_idx = (tx_idx + 1) * num_users_per_tx
             selected_rx_names = all_rx_names[start_idx:end_idx]
-            print(f"TX {tx_idx} ({tx_name}): Solving paths for {len(selected_rx_names)} associated users (UE_{start_idx} to UE_{end_idx-1})")
+            logger.info(f"TX {tx_idx} ({tx_name}): Solving paths for {len(selected_rx_names)} associated users (UE_{start_idx} to UE_{end_idx-1})")
         else:
             # Use all receivers
             selected_rx_names = all_rx_names
-            print(f"TX {tx_idx} ({tx_name}): Solving paths for all {len(selected_rx_names)} users")
+            logger.info(f"TX {tx_idx} ({tx_name}): Solving paths for all {len(selected_rx_names)} users")
         
         # Temporarily remove other receivers and TXs from scene
         rx_names_to_remove = [name for name in all_rx_names if name not in selected_rx_names]
@@ -120,9 +123,9 @@ def solve_paths_per_tx(
             scene.remove(tx_name_to_remove)
         
         try:
-            print(f"Solving paths for TX {tx_idx} ({tx_name}) with {len(selected_rx_names)} receivers")
-            print(f"Scene receivers: {len(scene.receivers)}")
-            print(f"Scene transmitters: {len(scene.transmitters)}")
+            logger.info(f"Solving paths for TX {tx_idx} ({tx_name}) with {len(selected_rx_names)} receivers")
+            logger.info(f"Scene receivers: {len(scene.receivers)}")
+            logger.info(f"Scene transmitters: {len(scene.transmitters)}")
             
             # Solve paths for this TX with selected receivers
             paths_tx = ps(
@@ -149,5 +152,5 @@ def solve_paths_per_tx(
             for tx_obj in removed_txs:
                 scene.add(tx_obj)
     
-    print(f"\nCompleted path solving for {len(paths_per_tx)} TXs")
+    logger.info(f"\nCompleted path solving for {len(paths_per_tx)} TXs")
     return paths_per_tx
