@@ -90,7 +90,7 @@ def generate_channels(config: Dict) -> Dict:
     scene_center = config['scene_center']
     antenna_height_offset = config['antenna_height_offset']
     num_deployment_buildings = config['num_deployment_buildings']
-    clip_terrain_to_buildings = config['clip_terrain_to_buildings']
+    clip_terrain = config['clip_terrain_to_buildings']
     terrain_clip_margin = config['terrain_clip_margin']
     user_shift_from_ground = config['user_shift_from_ground']
     
@@ -102,7 +102,7 @@ def generate_channels(config: Dict) -> Dict:
         scene_center=scene_center,
         antenna_height_offset=antenna_height_offset,
         num_deployment_buildings=num_deployment_buildings,
-        clip_terrain_to_buildings=clip_terrain_to_buildings,
+        clip_terrain=clip_terrain,
         terrain_clip_margin=terrain_clip_margin,
         user_shift_from_ground=user_shift_from_ground
     )

@@ -4,3 +4,4 @@ scenes/*
 *.DS_Store
 *.log
 *.png
+*.npz

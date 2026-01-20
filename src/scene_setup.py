@@ -23,7 +23,7 @@ def setup_scene(
     scene_center: list = [0.0, 0.0],
     antenna_height_offset: float = 10.0,
     num_deployment_buildings: int = 1,
-    clip_terrain_to_buildings: bool = True,
+    clip_terrain: bool = True,
     terrain_clip_margin: float = 15.0,
     user_shift_from_ground: float = 1.5,
     merge_shapes: bool = False
@@ -51,7 +51,7 @@ def setup_scene(
         Height offset of antennas from the roof (meters)
     num_deployment_buildings : int, default=1
         Number of buildings to deploy base stations on
-    clip_terrain_to_buildings : bool, default=True
+    clip_terrain : bool, default=True
         Whether to clip the terrain to building bounds
     terrain_clip_margin : float, default=15.0
         Margin in meters around buildings when clipping terrain
@@ -77,7 +77,7 @@ def setup_scene(
     building_positions = extract_building_positions_from_scene(scene)
     
     # Optionally clip terrain to building bounds BEFORE creating measurement surface
-    if clip_terrain_to_buildings and building_positions:
+    if clip_terrain and building_positions:
         bounds = get_building_bounds(building_positions)
         if bounds:
             (min_x, min_y), (max_x, max_y) = bounds
