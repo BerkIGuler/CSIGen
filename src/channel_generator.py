@@ -5,6 +5,7 @@ This module provides the primary interface for generating channel data
 using Sionna RT based on a configuration dictionary.
 """
 
+import logging
 from pathlib import Path
 from typing import Dict
 
@@ -16,6 +17,7 @@ from src.receivers import add_receivers_from_samples
 from src.path_solver import solve_paths_per_tx
 from src.channel import compute_cfr, save_channel_data
 
+logger = logging.getLogger(__name__)
 
 def generate_channels(config: Dict) -> Dict:
     """
@@ -67,7 +69,7 @@ def generate_channels(config: Dict) -> Dict:
         - num_subcarriers, num_ofdm_symbols, subcarrier_spacing
         - cfr_normalize_delays, cfr_normalize, cfr_out_type
         
-        Optional:
+        Scene Setup:
         - scene_center, antenna_height_offset, num_deployment_buildings
         - clip_terrain_to_buildings, terrain_clip_margin, user_shift_from_ground
         
@@ -80,20 +82,20 @@ def generate_channels(config: Dict) -> Dict:
         - 'scene': Scene object (optional, for inspection)
         - 'radio_map': RadioMap object (optional, for inspection)
     """
-    # Extract config with defaults
+    # Extract config parameters
     scene_xml_path = Path(config['scene_xml_path'])
     carrier_frequency = config['carrier_frequency']
     
     # Scene setup parameters
-    scene_center = config.get('scene_center', [0.0, 0.0])
-    antenna_height_offset = config.get('antenna_height_offset', 10.0)
-    num_deployment_buildings = config.get('num_deployment_buildings', 1)
-    clip_terrain_to_buildings = config.get('clip_terrain_to_buildings', True)
-    terrain_clip_margin = config.get('terrain_clip_margin', 15.0)
-    user_shift_from_ground = config.get('user_shift_from_ground', 1.5)
+    scene_center = config['scene_center']
+    antenna_height_offset = config['antenna_height_offset']
+    num_deployment_buildings = config['num_deployment_buildings']
+    clip_terrain_to_buildings = config['clip_terrain_to_buildings']
+    terrain_clip_margin = config['terrain_clip_margin']
+    user_shift_from_ground = config['user_shift_from_ground']
     
     # Step 1: Setup scene
-    print("Step 1: Setting up scene...")
+    logger.info("Step 1: Setting up scene...")
     scene, building_positions, measurement_surface, antenna_information = setup_scene(
         scene_xml_path=scene_xml_path,
         carrier_frequency=carrier_frequency,
@@ -106,7 +108,7 @@ def generate_channels(config: Dict) -> Dict:
     )
     
     # Step 2: Set antenna arrays
-    print("\nStep 2: Setting antenna arrays...")
+    logger.info("Step 2: Setting antenna arrays...")
     set_tx_antenna_array(
         scene,
         num_rows=config['tx_num_rows'],
@@ -128,7 +130,7 @@ def generate_channels(config: Dict) -> Dict:
     )
     
     # Step 3: Add base stations
-    print("\nStep 3: Adding base stations...")
+    logger.info("Step 3: Adding base stations...")
     num_sectors = config['num_sectors']
     for i, (building_id, antenna_position) in enumerate(antenna_information):
         bs_name = f"BS_{i}"
@@ -137,82 +139,82 @@ def generate_channels(config: Dict) -> Dict:
             bs_name,
             position=antenna_position,
             num_sectors=num_sectors,
-            mechanical_tilt=config.get('mechanical_tilt', 10.0),
-            azimuth_offset=config.get('azimuth_offset', 0.0),
-            tx_power_dbm=config.get('tx_power_dbm', 43.0),
-            display_radius=config.get('bs_display_radius', 15.0)
+            mechanical_tilt=config['mechanical_tilt'],
+            azimuth_offset=config['azimuth_offset'],
+            tx_power_dbm=config['tx_power_dbm'],
+            display_radius=config['bs_display_radius']
         )
     
     # Calculate total number of TXs
     num_txs = len(antenna_information) * num_sectors
     
     # Step 4: Solve radio map
-    print("\nStep 4: Solving radio map...")
+    logger.info("Step 4: Solving radio map...")
     radio_map = solve_radio_map(
         scene,
         measurement_surface=measurement_surface,
-        diffuse_reflection=config.get('radio_map_diffuse_reflection', True),
-        diffraction=config.get('radio_map_diffraction', True),
-        edge_diffraction=config.get('radio_map_edge_diffraction', True),
-        max_depth=config.get('radio_map_max_depth', 5),
-        samples_per_tx=config.get('radio_map_samples_per_tx', 10**8)
+        diffuse_reflection=config['radio_map_diffuse_reflection'],
+        diffraction=config['radio_map_diffraction'],
+        edge_diffraction=config['radio_map_edge_diffraction'],
+        max_depth=config['radio_map_max_depth'],
+        samples_per_tx=config['radio_map_samples_per_tx']
     )
     
     # Step 5: Sample user positions
-    print("\nStep 5: Sampling user positions...")
+    logger.info("Step 5: Sampling user positions...")
     sampled_positions = sample_user_positions(
         radio_map,
         num_pos_per_tx=config['num_user_samples_per_tx'],
-        metric=config.get('user_sample_metric', 'path_gain'),
-        min_val_db=config.get('user_sample_min_val_db', -150),
-        tx_association=config.get('tx_association', True),
-        center_pos=config.get('sample_center_pos', True),
-        seed=config.get('user_sample_seed', 1)
+        metric=config['user_sample_metric'],
+        min_val_db=config['user_sample_min_val_db'],
+        tx_association=config['tx_association'],
+        center_pos=config['sample_center_pos'],
+        seed=config['user_sample_seed']
     )
     
     # Step 6: Add receivers
-    print("\nStep 6: Adding receivers...")
+    logger.info("Step 6: Adding receivers...")
     num_txs_actual, num_users_per_tx, total_users = add_receivers_from_samples(
         scene,
         sampled_positions,
         num_sectors=num_sectors,
         mobility_preset=config['mobility_preset'],
         mobility_presets=config['mobility_presets'],
-        seed=config.get('user_sample_seed', 1)
+        seed=config['user_sample_seed']
     )
     
     # Step 7: Solve paths per TX
-    print("\nStep 7: Solving paths per TX...")
+    logger.info("Step 7: Solving paths per TX...")
     paths_per_tx = solve_paths_per_tx(
         scene,
         num_txs=num_txs_actual,
         num_sectors=num_sectors,
         num_users_per_tx=num_users_per_tx,
-        per_tx_users_only=config.get('path_solver_per_tx_users_only', True),
-        max_depth=config.get('path_solver_max_depth', 5),
-        max_num_paths_per_src=config.get('path_solver_max_num_paths_per_src', 10**6),
-        samples_per_src=config.get('path_solver_samples_per_src', 10**6),
-        synthetic_array=config.get('path_solver_synthetic_array', True),
-        los=config.get('path_solver_los_mode', True),
-        specular_reflection=config.get('path_solver_specular_reflection', True),
-        diffuse_reflection=config.get('path_solver_diffuse_reflection', True),
-        refraction=config.get('path_solver_refraction', True),
-        diffraction=config.get('path_solver_diffraction', True),
-        edge_diffraction=config.get('path_solver_edge_diffraction', True),
-        diffraction_lit_region=config.get('path_solver_diffraction_lit_region', False),
-        seed=config.get('path_solver_seed', 1)
+        per_tx_users_only=config['path_solver_per_tx_users_only'],
+        max_depth=config['path_solver_max_depth'],
+        max_num_paths_per_src=config['path_solver_max_num_paths_per_src'],
+        samples_per_src=config['path_solver_samples_per_src'],
+        synthetic_array=config['path_solver_synthetic_array'],
+        los=config['path_solver_los_mode'],
+        specular_reflection=config['path_solver_specular_reflection'],
+        diffuse_reflection=config['path_solver_diffuse_reflection'],
+        refraction=config['path_solver_refraction'],
+        diffraction=config['path_solver_diffraction'],
+        edge_diffraction=config['path_solver_edge_diffraction'],
+        diffraction_lit_region=config['path_solver_diffraction_lit_region'],
+        seed=config['path_solver_seed']
     )
     
     # Step 8: Compute CFR
-    print("\nStep 8: Computing Channel Frequency Response...")
+    logger.info("Step 8: Computing Channel Frequency Response...")
     cfr_per_tx = compute_cfr(
         paths_per_tx,
         num_subcarriers=config['num_subcarriers'],
         num_ofdm_symbols=config['num_ofdm_symbols'],
         subcarrier_spacing=config['subcarrier_spacing'],
-        normalize_delays=config.get('cfr_normalize_delays', True),
-        normalize=config.get('cfr_normalize', True),
-        out_type=config.get('cfr_out_type', 'numpy')
+        normalize_delays=config['cfr_normalize_delays'],
+        normalize=config['cfr_normalize'],
+        out_type=config['cfr_out_type']
     )
     
     # Prepare metadata
@@ -226,7 +228,7 @@ def generate_channels(config: Dict) -> Dict:
         'cfr_per_tx_dtypes': [str(h_tx.dtype) for h_tx in cfr_per_tx]
     }
     
-    print("\n✓ Channel generation complete!")
+    logger.info("Channel generation complete!")
     
     return {
         'cfr_per_tx': cfr_per_tx,
