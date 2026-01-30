@@ -8,6 +8,9 @@ for batch data generation pipelines.
 import numpy as np
 from sionna.rt import PlanarArray
 from typing import List, Tuple, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def set_rx_antenna_array(
@@ -67,10 +70,10 @@ def set_rx_antenna_array(
     
     total_elements = num_rows * num_cols * 2 if polarization in ["cross", "VH"] else num_rows * num_cols
     
-    print(f"UE Antenna Array Configuration Set:")
-    print(f"  - Array: {num_rows}x{num_cols} ({total_elements} elements)")
-    print(f"  - Pattern: {pattern}, Polarization: {polarization}")
-    print(f"  - Spacing: V={vertical_spacing}λ, H={horizontal_spacing}λ")
+    logger.info("UE Antenna Array Configuration Set:")
+    logger.info(f"  - Array: {num_rows}x{num_cols} ({total_elements} elements)")
+    logger.info(f"  - Pattern: {pattern}, Polarization: {polarization}")
+    logger.info(f"  - Spacing: V={vertical_spacing}λ, H={horizontal_spacing}λ")
     
     return antenna_array
 
@@ -276,18 +279,27 @@ def generate_ue_parameters(
     >>> # orientations is None - use look_at parameter instead:
     >>> rx = Receiver(name="UE", position=pos, look_at=scene.get("BS_0"), velocity=velocities[i])
     """
+    logger.info(f"Generating UE parameters for {num_ues} UEs")
+    logger.info(f"  - Orientation mode: {orientation_mode}")
+    logger.info(f"  - Speed distribution: {speed_distribution if speed_distribution else 'stationary'}")
+    logger.info(f"  - Direction mode: {direction_mode}")
+    if seed is not None:
+        logger.info(f"  - Seed: {seed}")
+    
     # Generate orientations
     if orientation_mode == "random":
         orientations = generate_random_orientations(num_ues, seed=seed)
+        logger.info(f"Generated random orientations for {num_ues} UEs")
     elif orientation_mode == "to_tx":
         # Delegate to Sionna's look_at - return None
         orientations = None
+        logger.info("Orientation mode 'to_tx': orientations set to None (use look_at parameter)")
     else:
         raise ValueError(
             f"Unknown orientation_mode '{orientation_mode}'. Must be 'random' or 'to_tx'"
         )
     
-    # Generate velocities (use seed+1 to avoid correlation)
+    # Generate velocities (use seed+1 to avoid correlation? - not sure if this is needed)
     velocity_seed = seed + 1 if seed is not None else None
     velocities = generate_ue_velocities(
         num_ues=num_ues,
@@ -300,5 +312,9 @@ def generate_ue_parameters(
         fixed_direction=fixed_direction,
         seed=velocity_seed
     )
+    
+    # Log velocity statistics
+    speeds = np.linalg.norm(velocities, axis=1)
+    logger.info(f"Generated velocities: min={np.min(speeds):.2f} m/s, max={np.max(speeds):.2f} m/s, mean={np.mean(speeds):.2f} m/s")
     
     return orientations, velocities

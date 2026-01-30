@@ -2,6 +2,7 @@ import numpy as np
 import colorsys
 import logging
 import matplotlib.pyplot as plt
+import mitsuba as mi
 
 logger = logging.getLogger(__name__)
 
@@ -337,7 +338,6 @@ def clip_terrain_to_buildings(scene, building_positions: dict, margin: float = 0
     Returns:
         bool: True if clipping was performed, False otherwise
     """
-    import mitsuba as mi
     
     bounds = get_building_bounds(building_positions)
     if bounds is None:
@@ -377,7 +377,7 @@ def clip_terrain_to_buildings(scene, building_positions: dict, margin: float = 0
     outside_count = np.sum(outside_mask)
     
     if outside_count == 0:
-        print(f"Terrain already within building bounds, no clipping needed")
+        logger.info("Terrain already within building bounds, no clipping needed")
         return True
     
     # Clamp vertices to bounds (move them to boundary instead of removing)
@@ -390,8 +390,8 @@ def clip_terrain_to_buildings(scene, building_positions: dict, margin: float = 0
         params['vertex_positions'] = mi.Float(vertices.flatten())
         params.update()
         
-        print(f"Clipped terrain: clamped {outside_count}/{original_count} vertices to bounds")
-        print(f"  Bounds: x=[{min_x:.1f}, {max_x:.1f}], y=[{min_y:.1f}, {max_y:.1f}]")
+        logger.info(f"Clipped terrain: clamped {outside_count}/{original_count} vertices to bounds")
+        logger.info(f"  Bounds: x=[{min_x:.1f}, {max_x:.1f}], y=[{min_y:.1f}, {max_y:.1f}]")
         return True
         
     except Exception as e:
@@ -417,9 +417,9 @@ def get_tx_color(tx_idx: int, num_txs: int) -> tuple:
     return (r, g, b)
 
 
-def visualize_complex_channel(h_channel, title="Complex Channel Response"):
+def visualize_time_frequency_response(h_channel, title="Complex Channel Response"):
     """
-    Visualize a complex channel frequency response.
+    Create a figure visualizing a complex channel frequency response between a transmitter antenna element and a receiver antenna element.
     
     Creates two side-by-side plots showing magnitude and phase of the channel.
     Subcarriers are on the y-axis and OFDM symbols on the x-axis.
@@ -427,16 +427,22 @@ def visualize_complex_channel(h_channel, title="Complex Channel Response"):
     Parameters
     ----------
     h_channel : np.ndarray
-        Complex channel array with shape [num_ofdm_symbols, num_subcarriers] or
-        [num_subcarriers, num_ofdm_symbols]. Will be transposed to ensure correct orientation.
+        Complex channel array with shape [num_ofdm_symbols, num_subcarriers]
     title : str
         Title for the plot
+    
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure object containing the plots. User can call fig.savefig() to save or plt.show() to display.
         
     Examples
     --------
-    >>> h = paths.cfr(...)  # shape: [users, tx, rx_ant, tx_ant, subcarriers, ofdm_symbols]
-    >>> first_user = h[0, 0, 0, 0, :, :]
-    >>> visualize_complex_channel(first_user, title="First User Channel")
+    >>> h = paths.cfr(...)  # shape: [num_rx, num_rx_ant, num_tx, num_tx_ant, num_ofdm_symbols, num_subcarriers]
+    >>> sample_channel = h[0, 0, 0, 0, :, :]
+    >>> fig = visualize_time_frequency_response(sample_channel, title="Channel Frequency Response")
+    >>> fig.savefig("channel_response.png")  # Save to file
+    >>> # or plt.show() to display interactively
     """
     h_channel = np.asarray(h_channel)
     
@@ -470,10 +476,6 @@ def visualize_complex_channel(h_channel, title="Complex Channel Response"):
     plt.colorbar(im2, ax=ax2, label='∠H (radians)')
     
     plt.tight_layout()
-    plt.show()
     
-    # Print statistics
-    print(f"Channel Statistics:")
-    print(f"  Shape: {h_channel.shape} (subcarriers × OFDM symbols)")
-    print(f"  Magnitude: min={np.min(magnitude):.4f}, max={np.max(magnitude):.4f}, mean={np.mean(magnitude):.4f}")
-    print(f"  Phase: range=[{np.min(phase):.4f}, {np.max(phase):.4f}] radians")
+    return fig
+    

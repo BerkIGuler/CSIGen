@@ -2,11 +2,14 @@ import numpy as np
 from sionna.rt import PlanarArray, Transmitter
 from typing import List, Tuple, Union
 import mitsuba as mi
+import logging
+
+logger = logging.getLogger(__name__)
 
 def set_tx_antenna_array(
     scene,
-    num_rows: int = 8,
-    num_cols: int = 8,
+    num_rows: int = 4,
+    num_cols: int = 4,
     vertical_spacing: float = 0.5,
     horizontal_spacing: float = 0.5,
     pattern: str = "tr38901",
@@ -22,15 +25,15 @@ def set_tx_antenna_array(
     scene : sionna.rt.Scene
         The Sionna scene to configure
     num_rows : int, default=8
-        Number of antenna rows (for 64T64R use 8)
+        Number of antenna rows
     num_cols : int, default=8  
-        Number of antenna columns (for 64T64R use 8)
+        Number of antenna columns
     vertical_spacing : float, default=0.5
         Vertical antenna spacing in wavelengths
     horizontal_spacing : float, default=0.5
         Horizontal antenna spacing in wavelengths
     pattern : str, default="tr38901"
-        Antenna element pattern ("tr38901", "dipole", "iso", custom)
+        Antenna element pattern ("tr38901", "dipole", "iso", "hw_dipole")
     polarization : str, default="cross"
         Polarization type ("cross", "V", "H", "VH")
     force_overwrite : bool, default=False
@@ -70,21 +73,20 @@ def set_tx_antenna_array(
     scene.tx_array = antenna_array
     
     # Calculate total elements for reporting
-    total_elements = num_rows * num_cols * 2 if polarization == "cross" else num_rows * num_cols
+    total_elements = num_rows * num_cols * 2 if polarization in ["cross", "VH"] else num_rows * num_cols
     
     # Estimate beamwidth
     frequency_ghz = scene.frequency / 1e9  # Convert Hz to GHz
     estimated_beamwidth = estimate_array_beamwidth(
         num_cols=num_cols,
-        frequency_ghz=frequency_ghz,
-        pattern=pattern
+        frequency_ghz=frequency_ghz
     )
     
-    print(f"Antenna Array Configuration Set:")
-    print(f"  - Array: {num_rows}x{num_cols} ({total_elements} elements)")
-    print(f"  - Pattern: {pattern}, Polarization: {polarization}")
-    print(f"  - Spacing: V={vertical_spacing}λ, H={horizontal_spacing}λ")
-    print(f"  - Estimated beamwidth: {estimated_beamwidth}°")
+    logger.info("Antenna Array Configuration Set:")
+    logger.info(f"  - Array: {num_rows}x{num_cols} ({total_elements} elements)")
+    logger.info(f"  - Pattern: {pattern}, Polarization: {polarization}")
+    logger.info(f"  - Spacing: V={vertical_spacing}λ, H={horizontal_spacing}λ")
+    logger.info(f"  - Estimated beamwidth: {estimated_beamwidth}°")
     
 
 def add_base_station(
@@ -209,22 +211,34 @@ def add_base_station(
         scene.add(tx)
         transmitters.append(tx)
         
-        print(f"Added {sector_name} at position {position}, azimuth {final_azimuth:.1f}°")
+        logger.info(f"Added {sector_name} at position {position}, azimuth {final_azimuth:.1f}°")
     
-    # Print summary
-    print(f"\nBase Station '{name}' Summary:")
-    print(f"  - Sectors: {num_sectors}")
-    print(f"  - Mechanical tilt: {mechanical_tilt:.1f}°")
-    print(f"  - TX Power: {tx_power_dbm} dBm")
-    print(f"  - Position: [{position[0]}, {position[1]}, {position[2]}] m")
+    # Log summary
+    logger.info(f"\nBase Station '{name}' Summary:")
+    logger.info(f"  - Sectors: {num_sectors}")
+    logger.info(f"  - Mechanical tilt: {mechanical_tilt:.1f}°")
+    logger.info(f"  - TX Power: {tx_power_dbm} dBm")
+    logger.info(f"  - Position: [{position[0]}, {position[1]}, {position[2]}] m")
     
     return transmitters
 
 def estimate_array_beamwidth(num_cols: int, 
-                           frequency_ghz: float = 3.5,
-                           pattern: str = "iso") -> float:
+                           frequency_ghz: float = 3.5) -> float:
     """
     Estimate horizontal 3dB beamwidth of planar array.
+    
+    This is a rough approximation based on the standard antenna array beamwidth
+    formula for uniform linear arrays. The base formula θ ≈ 51 * λ / D comes from
+    the relationship between aperture size and beamwidth, where:
+    - 51° is an empirical constant for 3dB beamwidth (derived from ~0.886 * 180/π)
+    - λ is wavelength
+    - D is aperture diameter (approximated as num_cols * spacing)
+    
+    Note: This is a simplified approximation. Actual beamwidth depends on:
+    - Element spacing and array geometry
+    - Element radiation pattern
+    - Beamforming weights
+    - Frequency-dependent effects
     
     Parameters
     ----------
@@ -232,28 +246,19 @@ def estimate_array_beamwidth(num_cols: int,
         Number of antenna columns
     frequency_ghz : float, default=3.5
         Frequency in GHz
-    pattern : str, default="iso"
-        Antenna element pattern ("tr38901", "dipole", "iso")
     
     Returns
     -------
     float
-        Estimated 3dB beamwidth in degrees
+        Estimated 3dB beamwidth in degrees (rough approximation)
     """
     wavelength = 0.3 / frequency_ghz  # meters (c = 300 m/μs)
     aperture_horizontal = num_cols * 0.5 * wavelength
     
-    # Approximate beamwidth formula: θ ≈ 51 * λ / D (degrees)
-    # This assumes uniform aperture illumination
+    # Base beamwidth formula: θ ≈ 51 * λ / D (degrees)
+    # This assumes uniform aperture illumination and is a rough approximation
+    # The constant 51° comes from the relationship: beamwidth ≈ 0.886 * (180/π) * λ/D
+    # for a uniform linear array's 3dB beamwidth
     beamwidth = 51 * wavelength / aperture_horizontal
     
-    # Apply pattern-specific correction factor
-    if pattern == "tr38901":
-        # TR38.901 pattern has narrower effective beamwidth due to element pattern
-        return beamwidth * 1.2
-    elif pattern == "dipole":
-        # Dipole pattern has moderate directivity
-        return beamwidth * 1.1
-    else:
-        # Isotropic or custom patterns
-        return beamwidth
+    return beamwidth
