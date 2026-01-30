@@ -43,7 +43,7 @@ def generate_channels(config: Dict) -> Dict:
         
         Base Stations:
         - num_sectors, mechanical_tilt, azimuth_offset
-        - tx_power_dbm, bs_display_radius
+        - tx_power_dbm
         
         Radio Map:
         - radio_map_diffuse_reflection, radio_map_diffraction, radio_map_edge_diffraction
@@ -141,8 +141,7 @@ def generate_channels(config: Dict) -> Dict:
             num_sectors=num_sectors,
             mechanical_tilt=config['mechanical_tilt'],
             azimuth_offset=config['azimuth_offset'],
-            tx_power_dbm=config['tx_power_dbm'],
-            display_radius=config['bs_display_radius']
+            tx_power_dbm=config['tx_power_dbm']
         )
     
     # Calculate total number of TXs

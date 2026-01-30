@@ -1,5 +1,5 @@
 """
-TemporalWiMAEDataset - Channel generation package using Sionna RT.
+CSIGen - Channel generation package using Sionna RT.
 """
 
 from src.channel_generator import generate_channels
