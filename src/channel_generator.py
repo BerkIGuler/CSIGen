@@ -152,9 +152,12 @@ def generate_channels(config: Dict) -> Dict:
     radio_map = solve_radio_map(
         scene,
         measurement_surface=measurement_surface,
+        specular_reflection=config['radio_map_specular_reflection'],
         diffuse_reflection=config['radio_map_diffuse_reflection'],
+        refraction=config['radio_map_refraction'],
         diffraction=config['radio_map_diffraction'],
         edge_diffraction=config['radio_map_edge_diffraction'],
+        diffraction_lit_region=config['radio_map_diffraction_lit_region'],
         max_depth=config['radio_map_max_depth'],
         samples_per_tx=config['radio_map_samples_per_tx']
     )
@@ -166,6 +169,9 @@ def generate_channels(config: Dict) -> Dict:
         num_pos_per_tx=config['num_user_samples_per_tx'],
         metric=config['user_sample_metric'],
         min_val_db=config['user_sample_min_val_db'],
+        max_val_db=config['user_sample_max_val_db'],
+        min_dist=config['user_sample_min_dist'],
+        max_dist=config['user_sample_max_dist'],
         tx_association=config['tx_association'],
         center_pos=config['sample_center_pos'],
         seed=config['user_sample_seed']

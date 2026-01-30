@@ -25,26 +25,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_config(config_path: Path) -> dict:
-    """
-    Load configuration from YAML file.
-    
-    Parameters
-    ----------
-    config_path : Path
-        Path to the YAML config file
-        
-    Returns
-    -------
-    dict
-        Configuration dictionary
-    """
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    
-    return config
-
-
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -68,12 +48,8 @@ def main():
     
     output_dir = Path("output")
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    logger.info(f"Loading configuration from {config_path}")
-    config = load_config(config_path)
-    
-    # Validate configuration before passing to generate_channels
-    logger.info("Validating configuration...")
+
+    logger.info(f"Loading and validating configuration from {config_path}")
     validated_config = load_validated_config(config_path)
     
     logger.info("Starting channel generation...")
