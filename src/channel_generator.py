@@ -15,7 +15,7 @@ from src.user_equipment import set_rx_antenna_array
 from src.radio_map import solve_radio_map, sample_user_positions
 from src.receivers import add_receivers_from_samples
 from src.path_solver import solve_paths_per_tx
-from src.channel import compute_cfr, save_channel_data
+from src.channel import compute_cfr
 
 logger = logging.getLogger(__name__)
 
