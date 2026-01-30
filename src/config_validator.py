@@ -7,6 +7,7 @@ with clear error messages.
 """
 
 import logging
+import yaml
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -14,13 +15,33 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 logger = logging.getLogger(__name__)
 
 
+# Allowed categorical values for configuration parameters
+TX_RX_PATTERN = Literal["tr38901", "dipole", "iso", "hw_dipole"]
+TX_RX_POLARIZATION = Literal["cross", "V", "H", "VH"]
+USER_SAMPLE_METRIC = Literal["path_gain", "rss", "sinr"]
+CFR_OUT_TYPE = Literal['drjit', 'jax', 'numpy', 'tf', 'torch']
+MOBILITY_PRESET = Literal[
+    "stationary",
+    "stationary_to_tx",
+    "pedestrian",
+    "pedestrian_to_tx",
+    "vehicular",
+    "slow_walking",
+    "fast_walking",
+]
+
+
 class MobilityPresetModel(BaseModel):
     """Model for a single mobility preset."""
-    orientation_mode: Literal["random", "to_tx"] = Field(..., description="Orientation mode for user equipment")
-    speed_distribution: Optional[Literal["pedestrian", "vehicular", "uniform_continuous"]] = Field(
-        None, description="Speed distribution type for user movement"
+    orientation_mode: Literal["random", "to_tx"] = Field(
+        ..., description="Orientation mode for user equipment (allowed: random, to_tx)"
     )
-    direction_mode: Optional[Literal["random"]] = Field(None, description="Direction mode for movement")
+    speed_distribution: Optional[Literal["pedestrian", "vehicular", "uniform_continuous"]] = Field(
+        None, description="Speed distribution type for user movement (allowed: pedestrian, vehicular, uniform_continuous)"
+    )
+    direction_mode: Optional[Literal["random"]] = Field(
+        None, description="Direction mode for movement (allowed: random)"
+    )
     speed_min: Optional[float] = Field(None, ge=0.0, description="Minimum speed in m/s")
     speed_max: Optional[float] = Field(None, ge=0.0, description="Maximum speed in m/s")
     
@@ -56,81 +77,104 @@ class ChannelConfigModel(BaseModel):
     
     # Scene configuration
     scene_xml_path: Union[str, Path] = Field(..., description="Path to scene XML file")
-    carrier_frequency: float = Field(..., gt=0, description="Carrier frequency in Hz")
+    carrier_frequency: Union[int, float] = Field(..., gt=0, description="Carrier frequency in Hz")
     
     # Scene setup parameters
-    scene_center: List[float] = Field(..., min_length=2, max_length=2, description="Center of the scene [x, y]")
-    antenna_height_offset: float = Field(..., ge=0, description="Height offset of antennas from the roof (meters)")
+    scene_center: List[Union[int, float]] = Field(..., min_length=2, max_length=2, description="Center of the scene")
+    antenna_height_offset: Union[int, float] = Field(..., ge=0, description="Height offset of antennas from the roof in meters")
     num_deployment_buildings: int = Field(..., ge=1, description="Number of buildings to deploy base stations on")
     clip_terrain_to_buildings: bool = Field(..., description="Whether to clip the terrain to building bounds")
-    terrain_clip_margin: float = Field(..., ge=0, description="Margin in meters around buildings when clipping terrain")
-    user_shift_from_ground: float = Field(..., description="Up shift in meters of users from the ground plane")
+    terrain_clip_margin: Union[int, float] = Field(..., ge=0, description="Margin in meters around buildings when clipping terrain")
+    user_shift_from_ground: Union[int, float] = Field(..., ge=0, description="Up shift in meters of users from the ground plane")
     
     # TX antenna array parameters
-    tx_num_rows: int = Field(..., ge=1, description="Number of rows of antennas")
-    tx_num_cols: int = Field(..., ge=1, description="Number of columns of antennas")
+    tx_num_rows: int = Field(..., ge=1, description="Number of rows in the tx antenna array")
+    tx_num_cols: int = Field(..., ge=1, description="Number of columns in the tx antenna array")
     tx_vertical_spacing: float = Field(..., gt=0, description="Vertical spacing (in units of carrier wavelength)")
     tx_horizontal_spacing: float = Field(..., gt=0, description="Horizontal spacing (in units of carrier wavelength)")
-    tx_pattern: str = Field(..., description="TX antenna pattern")
-    tx_polarization: str = Field(..., description="Polarization of the TX antennas")
+    tx_pattern: TX_RX_PATTERN = Field(..., description="TX antenna pattern")
+    tx_polarization: TX_RX_POLARIZATION = Field(..., description="Polarization of the TX antennas")
     
     # RX antenna array parameters
-    rx_num_rows: int = Field(..., ge=1, description="Number of rows of antennas")
-    rx_num_cols: int = Field(..., ge=1, description="Number of columns of antennas")
+    rx_num_rows: int = Field(..., ge=1, description="Number of rows in the rx antenna array")
+    rx_num_cols: int = Field(..., ge=1, description="Number of columns in the rx antenna array")
     rx_vertical_spacing: float = Field(..., gt=0, description="Vertical spacing (in units of carrier wavelength)")
     rx_horizontal_spacing: float = Field(..., gt=0, description="Horizontal spacing (in units of carrier wavelength)")
-    rx_pattern: str = Field(..., description="RX antenna pattern")
-    rx_polarization: str = Field(..., description="Polarization of the RX antennas")
+    rx_pattern: TX_RX_PATTERN = Field(..., description="RX antenna pattern")
+    rx_polarization: TX_RX_POLARIZATION = Field(..., description="Polarization of the RX antennas")
     
     # Base station parameters
     num_sectors: int = Field(..., ge=1, description="Number of sectors for each base station")
-    mechanical_tilt: float = Field(..., description="Mechanical tilt of the antenna (degrees)")
-    azimuth_offset: float = Field(..., description="Rotate the antenna arrays around z-axis by this amount (degrees)")
-    tx_power_dbm: float = Field(..., description="TX power in dBm for each TX antenna array")
+    mechanical_tilt: Union[int, float] = Field(..., description="Mechanical tilt of the antenna in degrees")
+    azimuth_offset: Union[int, float] = Field(..., description="Rotate the antenna arrays around z-axis by this amount in degrees")
+    tx_power_dbm: Union[int, float] = Field(..., description="TX power in dBm for each TX antenna array")
     
     # Radio map solver parameters
+    radio_map_specular_reflection: bool = Field(..., description="Whether to include specular reflection")
     radio_map_diffuse_reflection: bool = Field(..., description="Whether to include diffuse reflection")
+    radio_map_refraction: bool = Field(..., description="Whether to include refraction")
     radio_map_diffraction: bool = Field(..., description="Whether to include diffraction")
     radio_map_edge_diffraction: bool = Field(..., description="Whether to include edge diffraction")
+    radio_map_diffraction_lit_region: bool = Field(..., description="Whether to include diffraction in the lit region")
     radio_map_max_depth: int = Field(..., ge=1, description="Maximum number of ray scene interactions")
-    radio_map_samples_per_tx: int = Field(..., gt=0, description="Number of samples per TX antenna array")
+    radio_map_samples_per_tx: int = Field(..., ge=1, description="Number of samples per source")
     
     # User sampling parameters
     num_user_samples_per_tx: int = Field(..., ge=1, description="Number of user samples to generate per TX")
     user_sample_seed: int = Field(..., description="Seed for the user sampling")
-    user_sample_min_val_db: float = Field(..., description="Minimum value in dB for the user sampling")
-    user_sample_metric: str = Field(..., description="Metric for the user sampling")
-    tx_association: bool = Field(..., description="Whether to use TX association for the user sampling")
-    sample_center_pos: bool = Field(..., description="Whether to sample the user sampling from the radio map cell center")
+    user_sample_min_val_db: Union[int, float] = Field(..., description="Minimum value in dB for the user sampling")
+    user_sample_max_val_db: Union[int, float] = Field(..., description="Maximum value in dB for the user sampling")
+    user_sample_min_dist: Union[int, float] = Field(..., description="Minimum distance in meters for the user sampling")
+    user_sample_max_dist: Union[int, float] = Field(..., description="Maximum distance in meters for the user sampling")
+    user_sample_metric: USER_SAMPLE_METRIC = Field(..., description="Metric for the user sampling")
+    tx_association: bool = Field(
+        ...,
+        description=(
+            "If True, only positions associated with a transmitter are chosen, "
+            "i.e., positions where the chosen metric is the highest among all transmitters. "
+            "Else, a user located in a sampled position for a specific transmitter may perceive "
+            "a higher metric from another TX."
+        ),
+    )
+    sample_center_pos: bool = Field(
+        ...,
+        description=(
+            "If True, all returned positions are sampled from the cell center "
+            "(i.e., the grid of the radio map). Otherwise, the positions are randomly drawn "
+            "from the surface of the cell."
+        ),
+    )
     
     # Mobility preset
-    mobility_preset: str = Field(..., description="Select preset to use (must be a key in mobility_presets)")
+    mobility_preset: MOBILITY_PRESET = Field(
+        ..., description="Select preset to use (must be a key in mobility_presets)."
+    )
     mobility_presets: Dict[str, MobilityPresetModel] = Field(..., description="Dictionary of mobility presets")
     
     # Path solver parameters
     path_solver_max_depth: int = Field(..., ge=1, description="Maximum number of ray scene interactions")
-    path_solver_max_num_paths_per_src: int = Field(..., gt=0, description="Maximum number of paths per source")
-    path_solver_samples_per_src: int = Field(..., gt=0, description="Number of samples per source")
+    path_solver_max_num_paths_per_src: int = Field(..., ge=1, description="Maximum number of paths per source")
+    path_solver_samples_per_src: int = Field(..., ge=1, description="Number of samples per source")
     path_solver_synthetic_array: bool = Field(..., description="Use synthetic array for path computation")
-    path_solver_los_mode: bool = Field(..., description="Include line-of-sight paths")
+    path_solver_los_mode: bool = Field(..., description="Enable line-of-sight paths")
     path_solver_specular_reflection: bool = Field(..., description="Include specular reflections")
     path_solver_diffuse_reflection: bool = Field(..., description="Include diffuse reflections")
     path_solver_refraction: bool = Field(..., description="Include refraction")
     path_solver_diffraction: bool = Field(..., description="Include diffraction")
-    path_solver_edge_diffraction: bool = Field(..., description="Include edge diffraction")
-    path_solver_diffraction_lit_region: bool = Field(..., description="Include diffraction in lit region")
+    path_solver_edge_diffraction: bool = Field(..., description="Enables diffraction on free floating edges")
+    path_solver_diffraction_lit_region: bool = Field(..., description="Enables diffraction in the lit region")
     path_solver_seed: int = Field(..., description="Seed for reproducibility")
     path_solver_per_tx_users_only: bool = Field(..., description="If true, solve paths only for users associated with each TX")
     
     # OFDM parameters
     num_subcarriers: int = Field(..., ge=1, description="Number of subcarriers")
     num_ofdm_symbols: int = Field(..., ge=1, description="Number of OFDM symbols")
-    subcarrier_spacing: float = Field(..., gt=0, description="Spacing between subcarriers in Hz")
+    subcarrier_spacing: Union[int, float] = Field(..., gt=0, description="Spacing between subcarriers in Hz")
     
     # Channel Frequency Response (CFR) parameters
     cfr_normalize_delays: bool = Field(..., description="Whether to normalize delays in CFR computation")
     cfr_normalize: bool = Field(..., description="Whether to normalize the CFR")
-    cfr_out_type: Literal["numpy", "tensorflow"] = Field(..., description="Output type for CFR")
+    cfr_out_type: CFR_OUT_TYPE = Field(..., description="Output type for CFR")
     
     @field_validator('scene_xml_path')
     @classmethod
@@ -166,9 +210,7 @@ class ChannelConfigModel(BaseModel):
     
     class Config:
         """Pydantic configuration."""
-        # Allow extra fields (for backward compatibility, but they'll be ignored)
         extra = 'ignore'
-        # Validate assignment
         validate_assignment = True
 
 
@@ -218,9 +260,9 @@ def validate_config(config: Dict) -> Dict:
         raise
 
 
-def validate_config_file(config_path: Union[str, Path]) -> Dict:
+def load_validated_config(config_path: Union[str, Path]) -> Dict:
     """
-    Load and validate configuration from a YAML file.
+    Load configuration from a YAML file, validate it, and return the validated config.
     
     Parameters
     ----------
@@ -230,7 +272,7 @@ def validate_config_file(config_path: Union[str, Path]) -> Dict:
     Returns
     -------
     dict
-        Validated configuration dictionary
+        Validated configuration dictionary (ready to pass to generate_channels)
         
     Raises
     ------
@@ -239,7 +281,6 @@ def validate_config_file(config_path: Union[str, Path]) -> Dict:
     ValidationError
         If validation fails
     """
-    import yaml
     
     config_path = Path(config_path)
     if not config_path.exists():

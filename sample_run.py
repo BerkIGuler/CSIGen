@@ -15,7 +15,7 @@ import numpy as np
 
 from src.channel_generator import generate_channels
 from src.channel import save_channel_data
-from src.config_validator import validate_config_file
+from src.config_validator import load_validated_config
 
 # Setup logging
 logging.basicConfig(
@@ -74,7 +74,7 @@ def main():
     
     # Validate configuration before passing to generate_channels
     logger.info("Validating configuration...")
-    validated_config = validate_config_file(config_path)
+    validated_config = load_validated_config(config_path)
     
     logger.info("Starting channel generation...")
     result = generate_channels(validated_config)
