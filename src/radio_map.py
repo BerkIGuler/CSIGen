@@ -6,6 +6,9 @@ from sionna.rt import RadioMapSolver
 from typing import Tuple, Optional
 import numpy as np
 import mitsuba as mi
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def solve_radio_map(
@@ -201,3 +204,133 @@ def sample_user_positions(
         sample_kwargs["max_dist"] = max_dist
     sampled_positions = radio_map.sample_positions(**sample_kwargs)
     return sampled_positions[0], sampled_positions[1]  # positions, cell_ids
+
+
+def filter_positions_by_edge_distance(
+    sampled_positions: Tuple[np.ndarray, np.ndarray],
+    edge_epsilon: float
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Filter sampled positions to remove users within a specified distance from measurement surface edges.
+    
+    This function computes the actual bounds of the measurement surface from the sampled positions
+    and filters out positions that are too close to the edges. This is useful for avoiding edge
+    effects in channel simulations.
+    
+    Parameters
+    ----------
+    sampled_positions : tuple
+        Tuple of (positions, cell_ids) where:
+        - positions: Tensor/array with shape [num_tx, num_users_per_tx, 3]
+        - cell_ids: Tensor/array with shape [num_tx, num_users_per_tx]
+    edge_epsilon : float
+        Minimum distance in meters from measurement surface edges to keep users.
+        Users within this distance from any edge will be filtered out.
+        If 0.0 or negative, no filtering is performed.
+    
+    Returns
+    -------
+    tuple
+        (filtered_positions, filtered_cell_ids) with shape [num_tx, min_users_per_tx, 3] and
+        [num_tx, min_users_per_tx] respectively. All TXs will have the same number of users
+        (the minimum across all TXs after filtering).
+    
+    Notes
+    -----
+    - The bounds are computed from the actual sampled positions, which represent the
+      measurement surface bounds more accurately than scene bounds (when
+      the measurement surface is clipped to building bounds).
+    - After filtering, all TXs are truncated to have the same number of users to maintain
+      consistent array shapes. This uses the minimum number of users across all TXs.
+    """
+    if edge_epsilon <= 0.0:
+        logger.info(f"edge_epsilon is {edge_epsilon}, skipping edge filtering")
+        return sampled_positions
+    
+    # Convert to numpy for filtering
+    positions_np = sampled_positions[0]
+    cell_ids_np = sampled_positions[1]
+    
+    # Handle tensorflow tensors
+    if hasattr(positions_np, 'numpy'):
+        positions_np = positions_np.numpy()
+    if hasattr(cell_ids_np, 'numpy'):
+        cell_ids_np = cell_ids_np.numpy()
+    
+    num_txs, num_users_per_tx, _ = positions_np.shape
+    
+    # Compute actual bounds from sampled positions (measurement surface bounds)
+    # This is more accurate than scene bounds since the radio map may be computed
+    # on a clipped measurement surface
+    all_x_coords = positions_np[:, :, 0].flatten()
+    all_y_coords = positions_np[:, :, 1].flatten()
+    x_min = float(np.min(all_x_coords))
+    x_max = float(np.max(all_x_coords))
+    y_min = float(np.min(all_y_coords))
+    y_max = float(np.max(all_y_coords))
+    
+    logger.info(f"Measurement surface bounds: x=[{x_min:.1f}, {x_max:.1f}], y=[{y_min:.1f}, {y_max:.1f}]")
+    logger.info(f"Filtering users within {edge_epsilon:.1f} m of measurement surface edges...")
+    
+    # Filter positions for each TX
+    filtered_positions = []
+    filtered_cell_ids = []
+    
+    total_before = 0
+    total_after = 0
+    
+    for tx_idx in range(num_txs):
+        # Get positions for this TX
+        tx_positions = positions_np[tx_idx]  # [num_users_per_tx, 3]
+        tx_cell_ids = cell_ids_np[tx_idx]    # [num_users_per_tx]
+        
+        # Check distance from edges for each user
+        x_coords = tx_positions[:, 0]
+        y_coords = tx_positions[:, 1]
+        
+        # Keep users that are at least epsilon away from all edges
+        keep_mask = (
+            (x_coords >= x_min + edge_epsilon) & 
+            (x_coords <= x_max - edge_epsilon) &
+            (y_coords >= y_min + edge_epsilon) & 
+            (y_coords <= y_max - edge_epsilon)
+        )
+        
+        # Filter positions and cell_ids
+        filtered_tx_positions = tx_positions[keep_mask]
+        filtered_tx_cell_ids = tx_cell_ids[keep_mask]
+        
+        filtered_positions.append(filtered_tx_positions)
+        filtered_cell_ids.append(filtered_tx_cell_ids)
+        
+        num_kept = np.sum(keep_mask)
+        num_removed = len(keep_mask) - num_kept
+        total_before += len(keep_mask)
+        total_after += num_kept
+        
+        logger.info(f"  TX {tx_idx}: kept {num_kept}/{len(keep_mask)} users (removed {num_removed})")
+    
+    # Find the minimum number of users per TX to maintain consistent shape
+    min_users_per_tx = min(len(fp) for fp in filtered_positions)
+    
+    if min_users_per_tx == 0:
+        logger.warning("All users were filtered out for at least one TX!")
+        logger.warning("Consider reducing edge_epsilon or increasing num_user_samples_per_tx")
+        # Return empty arrays with correct shape
+        filtered_positions_array = np.empty((num_txs, 0, 3))
+        filtered_cell_ids_array = np.empty((num_txs, 0), dtype=cell_ids_np.dtype)
+        return filtered_positions_array, filtered_cell_ids_array
+    
+    # Truncate all TXs to have the same number of users (use first min_users_per_tx)
+    for tx_idx in range(num_txs):
+        filtered_positions[tx_idx] = filtered_positions[tx_idx][:min_users_per_tx]
+        filtered_cell_ids[tx_idx] = filtered_cell_ids[tx_idx][:min_users_per_tx]
+    
+    # Stack into arrays
+    filtered_positions_array = np.stack(filtered_positions, axis=0)  # [num_tx, min_users_per_tx, 3]
+    filtered_cell_ids_array = np.stack(filtered_cell_ids, axis=0)   # [num_tx, min_users_per_tx]
+    
+    logger.info(f"Filtering complete: {total_before} -> {total_after} users (removed {total_before - total_after})")
+    logger.info(f"Final users per TX: {min_users_per_tx}")
+    
+    return filtered_positions_array, filtered_cell_ids_array

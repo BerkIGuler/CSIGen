@@ -52,6 +52,7 @@ user_sample_max_dist: 10000.0  # Distance constraints (meters) - maximum
 user_sample_metric: "path_gain"  # Sampling metric: path_gain, rss, or sinr
 tx_association: true  # Associate users with strongest-signal TX
 sample_center_pos: true  # Sample from cell centers (deterministic) vs. randomly within cells
+scene_edge_epsilon: 1.0  # Minimum distance in meters from measurement surface edges to keep users (0.0 means no filtering)
 
 # Mobility preset
 mobility_preset: "stationary"  # Select preset to use (must be a key in mobility_presets)

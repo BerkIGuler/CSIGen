@@ -12,7 +12,7 @@ from typing import Dict
 from src.scene_setup import setup_scene
 from src.base_station import set_tx_antenna_array, add_base_station
 from src.user_equipment import set_rx_antenna_array
-from src.radio_map import solve_radio_map, sample_user_positions
+from src.radio_map import solve_radio_map, sample_user_positions, filter_positions_by_edge_distance
 from src.receivers import add_receivers_from_samples
 from src.path_solver import solve_paths_per_tx
 from src.channel import compute_cfr
@@ -144,9 +144,6 @@ def generate_channels(config: Dict) -> Dict:
             tx_power_dbm=config['tx_power_dbm']
         )
     
-    # Calculate total number of TXs
-    num_txs = len(antenna_information) * num_sectors
-    
     # Step 4: Solve radio map
     logger.info("Step 4: Solving radio map...")
     radio_map = solve_radio_map(
@@ -176,6 +173,14 @@ def generate_channels(config: Dict) -> Dict:
         center_pos=config['sample_center_pos'],
         seed=config['user_sample_seed']
     )
+    
+    # Step 5.5: Filter positions by edge distance
+    if config.get('scene_edge_epsilon', 0.0) > 0.0:
+        logger.info("Step 5.5: Filtering positions by edge distance...")
+        sampled_positions = filter_positions_by_edge_distance(
+            sampled_positions,
+            edge_epsilon=config['scene_edge_epsilon']
+        )
     
     # Step 6: Add receivers
     logger.info("Step 6: Adding receivers...")

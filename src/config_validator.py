@@ -144,6 +144,15 @@ class ChannelConfigModel(BaseModel):
             "from the surface of the cell."
         ),
     )
+    scene_edge_epsilon: Union[int, float] = Field(
+        ...,
+        ge=0.0,
+        description=(
+            "Minimum distance in meters from measurement surface edges to keep users. "
+            "Users within this distance from any edge will be filtered out. "
+            "Set to 0.0 to disable edge filtering."
+        ),
+    )
     
     # Mobility preset
     mobility_preset: MOBILITY_PRESET = Field(
