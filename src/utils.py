@@ -402,15 +402,19 @@ def clip_terrain_to_buildings(scene, building_positions: dict, margin: float = 0
 def get_tx_color(tx_idx: int, num_txs: int) -> tuple:
     """
     Generate distinct color for each TX using HSV color space.
-    
+    Avoids red hues so TX markers remain visible on a red ground.
+
     Args:
         tx_idx: Index of the transmitter (0 to num_txs-1)
         num_txs: Total number of transmitters
-        
+
     Returns:
         tuple: RGB color as (r, g, b) with values in [0, 1]
     """
-    hue = tx_idx / num_txs  # spread hues evenly
+    # Use hue in (0.08, 0.92) to skip red (hue 0 and 1)
+    hue_min, hue_max = 0.08, 0.92
+    denom = max(num_txs - 1, 1)
+    hue = hue_min + (tx_idx / denom) * (hue_max - hue_min)
     saturation = 0.8
     value = 0.9
     r, g, b = colorsys.hsv_to_rgb(hue, saturation, value)
