@@ -15,6 +15,7 @@ import numpy as np
 
 from src.channel_generator import generate_channels
 from src.channel import save_channel_data
+from src.config_validator import load_validated_config
 
 # Setup logging
 logging.basicConfig(
@@ -22,26 +23,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-
-def load_config(config_path: Path) -> dict:
-    """
-    Load configuration from YAML file.
-    
-    Parameters
-    ----------
-    config_path : Path
-        Path to the YAML config file
-        
-    Returns
-    -------
-    dict
-        Configuration dictionary
-    """
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    
-    return config
 
 
 def parse_args():
@@ -67,12 +48,12 @@ def main():
     
     output_dir = Path("output")
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    logger.info(f"Loading configuration from {config_path}")
-    config = load_config(config_path)
+
+    logger.info(f"Loading and validating configuration from {config_path}")
+    validated_config = load_validated_config(config_path)
     
     logger.info("Starting channel generation...")
-    result = generate_channels(config)
+    result = generate_channels(validated_config)
     
     # Extract results
     cfr_per_tx = result['cfr_per_tx']
@@ -83,7 +64,7 @@ def main():
     num_users_per_tx = metadata['num_users_per_tx']
     total_users = metadata['total_users']
     num_sectors = metadata['num_sectors']
-    per_tx_users_only = config['path_solver_per_tx_users_only']
+    per_tx_users_only = validated_config['path_solver_per_tx_users_only']
     
     # Save channel data for each TX
     logger.info(f"Saving channel data for {len(cfr_per_tx)} TX(s)...")
