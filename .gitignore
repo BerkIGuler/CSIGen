@@ -2,7 +2,7 @@
 **/.ipynb_checkpoints/
 output/*
 scenes/*
+examples/output/*
 *.DS_Store
 *.log
-*.png
 *.npz
