@@ -2,9 +2,10 @@
 Path solving utilities for efficient per-TX path computation.
 """
 
-from sionna.rt import PathSolver
-from typing import List
+from sionna.rt import PathSolver, Paths
+from typing import List, Tuple
 import logging
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -154,3 +155,87 @@ def solve_paths_per_tx(
     
     logger.info(f"\nCompleted path solving for {len(paths_per_tx)} TXs")
     return paths_per_tx
+
+
+def get_doppler_stats(paths_per_tx: List[Paths]) -> Tuple[List[float], List[float], List[Tuple[float, float]]]:
+    """
+    Get Doppler statistics per TX: mean shift, spread (std), and (min, max) across all paths.
+    """
+    mean_doppler_shifts = []
+    doppler_spreads = []
+    min_max_doppler_shifts = []
+    for paths in paths_per_tx:
+        doppler_shifts = paths.doppler.numpy()
+        mean_doppler_shifts.append(np.mean(doppler_shifts))
+        doppler_spreads.append(np.std(doppler_shifts))
+        min_max_doppler_shifts.append((np.min(doppler_shifts), np.max(doppler_shifts)))
+    return mean_doppler_shifts, doppler_spreads, min_max_doppler_shifts
+
+def get_delay_stats(
+    paths_per_tx: List[Paths],
+    min_delay_s: float = 1e-9,
+    max_delay_s: float = 1.0,
+) -> Tuple[
+    List[float], List[float], List[float], List[Tuple[float, float]],
+    List[int], List[int], List[int], List[int],
+]:
+    """
+    Get delay statistics per TX: mean delay, spread (std), RMS delay spread, (min, max), and counts.
+    Delays are in seconds (Sionna convention). Only delays in [min_delay_s, max_delay_s] are used for stats.
+
+    Counts (per TX):
+    - reasonable: in [min_delay_s, max_delay_s] (used for stats)
+    - unreasonable: < 0 or > max_delay_s (non-physical)
+    - padding: in [0, min_delay_s) (e.g. zero / empty slot)
+    - total_delays: reasonable + unreasonable only (excludes padding for comparison)
+
+    Returns
+    -------
+    mean_delays, delay_spreads, rms_delay_spreads, min_max_delays
+    num_reasonable_delays, num_unreasonable_delays, num_padding_delays, num_total_delays (reasonable + unreasonable)
+    """
+    mean_delays = []
+    delay_spreads = []
+    rms_delay_spreads = []
+    min_max_delays = []
+    num_reasonable_delays = []
+    num_unreasonable_delays = []
+    num_padding_delays = []
+    num_total_delays = []  # reasonable + unreasonable
+    for paths in paths_per_tx:
+        raw = paths.tau.numpy()
+        delays = np.asarray(raw, dtype=np.float64).flatten()
+        reasonable = (delays >= min_delay_s) & (delays <= max_delay_s)
+        unreasonable = (delays < 0) | (delays > max_delay_s)
+        padding = (delays >= 0) & (delays < min_delay_s)
+        n_reasonable = int(np.sum(reasonable))
+        n_unreasonable = int(np.sum(unreasonable))
+        n_padding = int(np.sum(padding))
+        n_total = n_reasonable + n_unreasonable
+        num_reasonable_delays.append(n_reasonable)
+        num_unreasonable_delays.append(n_unreasonable)
+        num_padding_delays.append(n_padding)
+        num_total_delays.append(n_total)
+        if n_unreasonable > 0:
+            logger.info(
+                "get_delay_stats: %s reasonable, %s unreasonable; using delays in [%.0e, %.0e] s for stats",
+                n_reasonable, n_unreasonable, min_delay_s, max_delay_s,
+            )
+        if not np.any(reasonable):
+            mean_delays.append(np.nan)
+            delay_spreads.append(np.nan)
+            rms_delay_spreads.append(np.nan)
+            min_max_delays.append((np.nan, np.nan))
+            continue
+        d = delays[reasonable]
+        mean_delay = np.mean(d)
+        delay_spread = np.std(d)
+        rms_delay_spread = np.sqrt(np.mean((d - mean_delay) ** 2))
+        mean_delays.append(float(mean_delay))
+        delay_spreads.append(float(delay_spread))
+        rms_delay_spreads.append(float(rms_delay_spread))
+        min_max_delays.append((float(np.min(d)), float(np.max(d))))
+    return (
+        mean_delays, delay_spreads, rms_delay_spreads, min_max_delays,
+        num_reasonable_delays, num_unreasonable_delays, num_padding_delays, num_total_delays,
+    )
