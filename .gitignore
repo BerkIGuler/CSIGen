@@ -1,8 +1,11 @@
 **/__pycache__/
 **/.ipynb_checkpoints/
 output/*
-scenes/*
 examples/output/*
 *.DS_Store
 *.log
 *.npz
+
+# Ignore all scenes except boston_1
+scenes/*
+!scenes/boston_1/
