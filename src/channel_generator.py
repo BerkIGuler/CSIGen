@@ -7,19 +7,19 @@ using Sionna RT based on a configuration dictionary.
 
 import logging
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Iterator, Any
 
 from src.scene_setup import setup_scene
 from src.base_station import set_tx_antenna_array, add_base_station
 from src.user_equipment import set_rx_antenna_array
 from src.radio_map import solve_radio_map, sample_user_positions, filter_positions_by_edge_distance
 from src.receivers import add_receivers_from_samples
-from src.path_solver import solve_paths_per_tx
-from src.channel import compute_cfr
+from src.path_solver import _solve_paths_for_single_tx
+from src.channel import compute_cfr_for_paths
 
 logger = logging.getLogger(__name__)
 
-def generate_channels(config: Dict) -> Dict:
+def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
     """
     Main function to generate channels from config.
     
@@ -73,14 +73,14 @@ def generate_channels(config: Dict) -> Dict:
         - scene_center, antenna_height_offset, num_deployment_buildings
         - clip_terrain_to_buildings, terrain_clip_margin, user_shift_from_ground
         
-    Returns
-    -------
+    Yields
+    ------
     dict
-        Dictionary with keys:
-        - 'h': Channel frequency response array [total_users, num_txs, num_rx_ant, num_tx_ant, num_subcarriers, num_ofdm_symbols]
-        - 'metadata': Metadata dict containing config and scene info
-        - 'scene': Scene object (optional, for inspection)
-        - 'radio_map': RadioMap object (optional, for inspection)
+        Per-TX dictionary with keys:
+        - 'tx_idx': int
+        - 'tx_name': str
+        - 'h_tx': np.ndarray (CFR for this TX)
+        - 'tx_metadata': dict with TX/RX positions and global config-derived info
     """
     # Extract config parameters
     scene_xml_path = Path(config['scene_xml_path'])
@@ -193,56 +193,94 @@ def generate_channels(config: Dict) -> Dict:
         seed=config['user_sample_seed']
     )
     
-    # Step 7: Solve paths per TX
-    logger.info("Step 7: Solving paths per TX...")
-    paths_per_tx = solve_paths_per_tx(
-        scene,
-        num_txs=num_txs_actual,
-        num_sectors=num_sectors,
-        num_users_per_tx=num_users_per_tx,
-        per_tx_users_only=config['path_solver_per_tx_users_only'],
-        max_depth=config['path_solver_max_depth'],
-        max_num_paths_per_src=config['path_solver_max_num_paths_per_src'],
-        samples_per_src=config['path_solver_samples_per_src'],
-        synthetic_array=config['path_solver_synthetic_array'],
-        los=config['path_solver_los_mode'],
-        specular_reflection=config['path_solver_specular_reflection'],
-        diffuse_reflection=config['path_solver_diffuse_reflection'],
-        refraction=config['path_solver_refraction'],
-        diffraction=config['path_solver_diffraction'],
-        edge_diffraction=config['path_solver_edge_diffraction'],
-        diffraction_lit_region=config['path_solver_diffraction_lit_region'],
-        seed=config['path_solver_seed']
-    )
-    
-    # Step 8: Compute CFR
-    logger.info("Step 8: Computing Channel Frequency Response...")
-    cfr_per_tx = compute_cfr(
-        paths_per_tx,
-        num_subcarriers=config['num_subcarriers'],
-        num_ofdm_symbols=config['num_ofdm_symbols'],
-        subcarrier_spacing=config['subcarrier_spacing'],
-        normalize_delays=config['cfr_normalize_delays'],
-        normalize=config['cfr_normalize'],
-        out_type=config['cfr_out_type']
-    )
-    
-    # Prepare metadata
-    metadata = {
-        'config': config,
-        'num_txs': num_txs_actual,
-        'num_users_per_tx': num_users_per_tx,
-        'total_users': total_users,
-        'num_sectors': num_sectors,
-        'cfr_per_tx_shapes': [h_tx.shape for h_tx in cfr_per_tx],
-        'cfr_per_tx_dtypes': [str(h_tx.dtype) for h_tx in cfr_per_tx]
-    }
-    
-    logger.info("Channel generation complete!")
-    
-    return {
-        'cfr_per_tx': cfr_per_tx,
-        'metadata': metadata,
-        'scene': scene,  # Optional: for inspection
-        'radio_map': radio_map  # Optional: for inspection
-    }
+    # Step 7 & 8: Solve paths and compute CFR per TX in a streaming fashion
+    logger.info("Step 7 & 8: Solving paths and computing CFR per TX (streaming)...")
+
+    per_tx_users_only = config['path_solver_per_tx_users_only']
+
+    for tx_idx in range(num_txs_actual):
+        # Solve paths for this TX only
+        paths_tx = _solve_paths_for_single_tx(
+            scene=scene,
+            tx_idx=tx_idx,
+            num_txs=num_txs_actual,
+            num_sectors=num_sectors,
+            num_users_per_tx=num_users_per_tx,
+            per_tx_users_only=per_tx_users_only,
+            max_depth=config['path_solver_max_depth'],
+            max_num_paths_per_src=config['path_solver_max_num_paths_per_src'],
+            samples_per_src=config['path_solver_samples_per_src'],
+            synthetic_array=config['path_solver_synthetic_array'],
+            los=config['path_solver_los_mode'],
+            specular_reflection=config['path_solver_specular_reflection'],
+            diffuse_reflection=config['path_solver_diffuse_reflection'],
+            refraction=config['path_solver_refraction'],
+            diffraction=config['path_solver_diffraction'],
+            edge_diffraction=config['path_solver_edge_diffraction'],
+            diffraction_lit_region=config['path_solver_diffraction_lit_region'],
+            seed=config['path_solver_seed'],
+        )
+
+        # Compute CFR for this TX only
+        h_tx = compute_cfr_for_paths(
+            paths_tx=paths_tx,
+            num_subcarriers=config['num_subcarriers'],
+            num_ofdm_symbols=config['num_ofdm_symbols'],
+            subcarrier_spacing=config['subcarrier_spacing'],
+            normalize_delays=config['cfr_normalize_delays'],
+            normalize=config['cfr_normalize'],
+            out_type=config['cfr_out_type'],
+        )
+
+        # Derive TX name and position
+        bs_id = tx_idx // num_sectors
+        sector_id = (tx_idx % num_sectors) + 1
+        tx_name = f"BS_{bs_id}_sector_{sector_id}"
+        tx_obj = scene.get(tx_name)
+        tx_pos = tx_obj.position
+        if hasattr(tx_pos, 'numpy'):
+            tx_pos = tx_pos.numpy()
+
+        # RX positions for this TX, aligned with CFR user axis
+        if per_tx_users_only:
+            start_idx = tx_idx * num_users_per_tx
+            end_idx = start_idx + num_users_per_tx
+            rx_names = [f"UE_{i}" for i in range(start_idx, end_idx)]
+        else:
+            rx_names = [f"UE_{i}" for i in range(total_users)]
+
+        import numpy as _np  # local import to avoid circulars
+
+        rx_positions = []
+        for rx_name in rx_names:
+            rx = scene.get(rx_name)
+            pos = rx.position
+            if hasattr(pos, 'numpy'):
+                pos = pos.numpy()
+            else:
+                pos = _np.array(pos)
+            rx_positions.append(pos)
+        rx_positions = _np.stack(rx_positions, axis=0)
+
+        # Prepare per-TX metadata
+        tx_metadata = {
+            'tx_idx': tx_idx,
+            'tx_name': tx_name,
+            'tx_position': tx_pos,
+            'rx_positions': rx_positions,
+            'rx_names': rx_names,
+            'num_txs': num_txs_actual,
+            'num_users_per_tx': num_users_per_tx,
+            'total_users': total_users,
+            'num_sectors': num_sectors,
+            'cfr_shape': h_tx.shape,
+            'cfr_dtype': str(h_tx.dtype),
+            'config': config,
+        }
+
+        yield {
+            'tx_idx': tx_idx,
+            'tx_name': tx_name,
+            'h_tx': h_tx,
+            'tx_metadata': tx_metadata,
+        }

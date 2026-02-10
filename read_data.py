@@ -2,7 +2,10 @@
 Utility script to inspect a saved channel .npz file.
 
 Usage:
-    python read_data.py --file output/channel_tx_0.npz
+    python read_data.py --file output/<scene_name>/<timestamp>/channel_tx_0.npz
+
+This matches the new directory layout created by sample_run.py, e.g.:
+    output/boston_1/20260210_123456/channel_tx_0.npz
 """
 
 import argparse
@@ -18,7 +21,7 @@ def parse_args():
         "--file",
         type=str,
         required=True,
-        help="Path to the .npz file (e.g., output/channel_tx_0.npz)",
+        help="Path to the .npz file (e.g., output/<scene_name>/<timestamp>/channel_tx_0.npz)",
     )
     return parser.parse_args()
 

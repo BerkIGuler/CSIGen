@@ -11,22 +11,23 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def compute_cfr(
-    paths_per_tx: List,
+def compute_cfr_for_paths(
+    paths_tx,
     num_subcarriers: int,
     num_ofdm_symbols: int,
     subcarrier_spacing: float,
     normalize_delays: bool = True,
     normalize: bool = False,
-    out_type: str = "numpy"
-) -> List[np.ndarray]:
+    out_type: str = "numpy",
+) -> np.ndarray:
     """
-    Compute Channel Frequency Response (CFR) from paths for each TX.
-    
+    Compute Channel Frequency Response (CFR) from paths for a single TX.
+
     Parameters
     ----------
-    paths_per_tx : list
-        List of Paths objects (one per TX) from solve_paths_per_tx()
+    paths_tx :
+        Paths object for a single TX, typically from solve_paths_per_tx() or the
+        streaming per-TX solver.
     num_subcarriers : int
         Number of subcarriers
     num_ofdm_symbols : int
@@ -37,40 +38,72 @@ def compute_cfr(
         Whether to normalize delays in CFR computation
     normalize : bool, default=False
         Whether to normalize the CFR
-    out_type : str, default="numpy"
-        Output type ("numpy" or "tensorflow")
-    
+    out_type : str, default=\"numpy\"
+        Output type (\"numpy\" or \"tensorflow\")
+
     Returns
     -------
-    List[np.ndarray]
-        List of CFR arrays, one per TX. Each array has shape 
+    np.ndarray
+        CFR array for this TX with shape
         [num_selected_users, 1, num_rx_ant, num_tx_ant, num_subcarriers, num_ofdm_symbols]
     """
     frequencies = subcarrier_frequencies(num_subcarriers, subcarrier_spacing)
     ofdm_symbol_duration = 1 / subcarrier_spacing
-    
-    # Compute CFR for each TX
-    cfr_per_tx = []
-    
+
+    h_tx = paths_tx.cfr(
+        frequencies=frequencies,
+        sampling_frequency=1 / ofdm_symbol_duration,
+        num_time_steps=num_ofdm_symbols,
+        normalize_delays=normalize_delays,
+        normalize=normalize,
+        out_type=out_type,
+    )
+    logger.info("Single TX CFR shape %s", h_tx.shape)
+    return h_tx
+
+
+def compute_cfr(
+    paths_per_tx: List,
+    num_subcarriers: int,
+    num_ofdm_symbols: int,
+    subcarrier_spacing: float,
+    normalize_delays: bool = True,
+    normalize: bool = False,
+    out_type: str = "numpy",
+) -> List[np.ndarray]:
+    """
+    Compute Channel Frequency Response (CFR) from paths for each TX.
+
+    This function is retained for convenience and tests. For memory-efficient
+    large-scale runs, prefer calling compute_cfr_for_paths per TX instead of
+    materializing all CFRs at once.
+    """
+    cfr_per_tx: List[np.ndarray] = []
     for tx_idx, paths_tx in enumerate(paths_per_tx):
-        # Compute CFR for this TX
-        h_tx = paths_tx.cfr(
-            frequencies=frequencies,
-            sampling_frequency=1/ofdm_symbol_duration,
-            num_time_steps=num_ofdm_symbols,
+        h_tx = compute_cfr_for_paths(
+            paths_tx=paths_tx,
+            num_subcarriers=num_subcarriers,
+            num_ofdm_symbols=num_ofdm_symbols,
+            subcarrier_spacing=subcarrier_spacing,
             normalize_delays=normalize_delays,
             normalize=normalize,
-            out_type=out_type
+            out_type=out_type,
         )
-        # h_tx shape: [num_selected_users, 1, num_rx_ant, num_tx_ant, num_subcarriers, num_ofdm_symbols]
         cfr_per_tx.append(h_tx)
-        logger.info(f"TX {tx_idx}: CFR shape {h_tx.shape}")
-    
-    # Print dimensions from first TX
+        logger.info("TX %s: CFR shape %s", tx_idx, h_tx.shape)
+
     if cfr_per_tx:
         num_rxs, num_rx_ant, num_txs, num_tx_ant, num_ofdm_symbols_check, num_subcarriers_check = cfr_per_tx[0].shape
-        logger.info(f"\nCFR shape from PathSolver: [num_users={num_rxs}, num_tx={num_txs}, num_rx_ant={num_rx_ant}, num_tx_ant={num_tx_ant}, num_subcarriers={num_subcarriers_check}, num_ofdm_symbols={num_ofdm_symbols_check}]")
-    
+        logger.info(
+            "\\nCFR shape from PathSolver: [num_users=%s, num_tx=%s, num_rx_ant=%s, num_tx_ant=%s, num_subcarriers=%s, num_ofdm_symbols=%s]",
+            num_rxs,
+            num_txs,
+            num_rx_ant,
+            num_tx_ant,
+            num_subcarriers_check,
+            num_ofdm_symbols_check,
+        )
+
     return cfr_per_tx
 
 
