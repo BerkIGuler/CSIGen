@@ -10,8 +10,8 @@ This script demonstrates how to:
 import argparse
 import yaml
 from pathlib import Path
+from datetime import datetime
 import logging
-import numpy as np
 
 from src.channel_generator import generate_channels
 from src.channel import save_channel_data
@@ -45,96 +45,66 @@ def main():
     args = parse_args()
     
     config_path = Path(args.config)
-    
-    output_dir = Path("output")
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Loading and validating configuration from {config_path}")
     validated_config = load_validated_config(config_path)
-    
-    logger.info("Starting channel generation...")
-    result = generate_channels(validated_config)
-    
-    # Extract results
-    cfr_per_tx = result['cfr_per_tx']
-    metadata = result['metadata']
-    scene = result['scene']
 
-    num_txs = metadata['num_txs']
-    num_users_per_tx = metadata['num_users_per_tx']
-    total_users = metadata['total_users']
-    num_sectors = metadata['num_sectors']
-    per_tx_users_only = validated_config['path_solver_per_tx_users_only']
+    # Derive scene name from the directory under 'scenes'
+    scene_xml_path = Path(validated_config['scene_xml_path'])
+    scene_name = scene_xml_path.parent.name or scene_xml_path.stem
+
+    # Create a timestamped run directory: output/<scene_name>/<YYYYmmdd_HHMMSS>
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = Path("output") / scene_name / timestamp
+    output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Save channel data for each TX
-    logger.info(f"Saving channel data for {len(cfr_per_tx)} TX(s)...")
-    for tx_idx, h_tx in enumerate(cfr_per_tx):
+    logger.info("Starting channel generation (streaming per TX)...")
+
+    # Global summary information to be filled as we stream results
+    num_txs = None
+    num_users_per_tx = None
+    total_users = None
+    num_sectors = None
+    cfr_shapes = []
+    cfr_dtypes = []
+
+    for item in generate_channels(validated_config):
+        tx_idx = item['tx_idx']
+        h_tx = item['h_tx']
+        tx_metadata = item['tx_metadata']
+
+        # Initialize global summary info from first TX
+        if num_txs is None:
+            num_txs = int(tx_metadata['num_txs'])
+            num_users_per_tx = int(tx_metadata['num_users_per_tx'])
+            total_users = int(tx_metadata['total_users'])
+            num_sectors = int(tx_metadata['num_sectors'])
+
+        cfr_shapes.append(list(h_tx.shape))
+        cfr_dtypes.append(str(h_tx.dtype))
+
         output_path = output_dir / f"channel_tx_{tx_idx}.npz"
-
-        # Derive TX name and position
-        bs_id = tx_idx // num_sectors
-        sector_id = (tx_idx % num_sectors) + 1
-        tx_name = f"BS_{bs_id}_sector_{sector_id}"
-        tx_obj = scene.get(tx_name)
-        tx_pos = tx_obj.position
-        if hasattr(tx_pos, 'numpy'):
-            tx_pos = tx_pos.numpy()
-        else:
-            tx_pos = np.array(tx_pos)
-
-        # RX positions for this TX, aligned with CFR user axis
-        if per_tx_users_only:
-            start_idx = tx_idx * num_users_per_tx
-            end_idx = start_idx + num_users_per_tx
-            rx_names = [f"UE_{i}" for i in range(start_idx, end_idx)]
-        else:
-            rx_names = [f"UE_{i}" for i in range(total_users)]
-
-        rx_positions = []
-        for rx_name in rx_names:
-            rx = scene.get(rx_name)
-            pos = rx.position
-            if hasattr(pos, 'numpy'):
-                pos = pos.numpy()
-            else:
-                pos = np.array(pos)
-            rx_positions.append(pos)
-        rx_positions = np.stack(rx_positions, axis=0)  # [num_users_per_tx or total_users, 3]
-
-        # Create TX-specific metadata including positions
-        tx_metadata = {
-            'tx_idx': tx_idx,
-            'tx_name': tx_name,
-            'tx_position': tx_pos,
-            'rx_positions': rx_positions,
-            'rx_names': rx_names,
-            'num_txs': num_txs,
-            'num_users_per_tx': num_users_per_tx,
-            'total_users': metadata['total_users'],
-            'num_sectors': num_sectors,
-            'cfr_shape': h_tx.shape,
-            'cfr_dtype': str(h_tx.dtype),
-            'config': metadata['config'],
-        }
-
         # Save channel data + metadata (including positions)
         save_channel_data(
             h=h_tx,
             output_path=output_path,
             metadata=tx_metadata,
         )
-        logger.info(f"Saved channel data for TX {tx_idx} ({tx_name}) to {output_path}")
+        logger.info(f"Saved channel data for TX {tx_idx} ({tx_metadata['tx_name']}) to {output_path}")
 
-    # Also save combined metadata summary
+    # Also save combined metadata summary (including the config and run info)
     metadata_path = output_dir / "metadata.yaml"
     with open(metadata_path, 'w') as f:
         yaml_metadata = {
-            'num_txs': int(num_txs),
-            'num_users_per_tx': int(num_users_per_tx),
-            'total_users': int(metadata['total_users']),
-            'num_sectors': int(num_sectors),
-            'cfr_per_tx_shapes': [list(shape) for shape in metadata['cfr_per_tx_shapes']],
-            'cfr_per_tx_dtypes': metadata['cfr_per_tx_dtypes'],
+            'scene_name': scene_name,
+            'run_timestamp': timestamp,
+            'num_txs': int(num_txs) if num_txs is not None else 0,
+            'num_users_per_tx': int(num_users_per_tx) if num_users_per_tx is not None else 0,
+            'total_users': int(total_users) if total_users is not None else 0,
+            'num_sectors': int(num_sectors) if num_sectors is not None else 0,
+            'cfr_per_tx_shapes': cfr_shapes,
+            'cfr_per_tx_dtypes': cfr_dtypes,
+            'config': validated_config,
         }
         yaml.dump(yaml_metadata, f, default_flow_style=False)
     
