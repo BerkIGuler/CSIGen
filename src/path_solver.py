@@ -224,7 +224,7 @@ def solve_paths_per_tx(
 
 def get_doppler_stats(paths_per_tx: List[Paths]) -> Tuple[List[float], List[float], List[Tuple[float, float]]]:
     """
-    Get Doppler statistics per TX: mean shift, spread (std), and (min, max) across all paths.
+    Get Doppler statistics per TX: mean shift, spread (std), and (min, max) across all paths to all receivers.
     """
     mean_doppler_shifts = []
     doppler_spreads = []
@@ -236,71 +236,78 @@ def get_doppler_stats(paths_per_tx: List[Paths]) -> Tuple[List[float], List[floa
         min_max_doppler_shifts.append((np.min(doppler_shifts), np.max(doppler_shifts)))
     return mean_doppler_shifts, doppler_spreads, min_max_doppler_shifts
 
-def get_delay_stats(
-    paths_per_tx: List[Paths],
-    min_delay_s: float = 1e-9,
-    max_delay_s: float = 1.0,
-) -> Tuple[
-    List[float], List[float], List[float], List[Tuple[float, float]],
-    List[int], List[int], List[int], List[int],
-]:
+def get_delay_stats(paths_per_tx: List[Paths]) -> Tuple[List[float], List[float]]:
     """
-    Get delay statistics per TX: mean delay, spread (std), RMS delay spread, (min, max), and counts.
-    Delays are in seconds (Sionna convention). Only delays in [min_delay_s, max_delay_s] are used for stats.
+    Compute per-TX delay statistics from `paths_per_tx`, discarding invalid entries.
 
-    Counts (per TX):
-    - reasonable: in [min_delay_s, max_delay_s] (used for stats)
-    - unreasonable: < 0 or > max_delay_s (non-physical)
-    - padding: in [0, min_delay_s) (e.g. zero / empty slot)
-    - total_delays: reasonable + unreasonable only (excludes padding for comparison)
-
-    Returns
-    -------
-    mean_delays, delay_spreads, rms_delay_spreads, min_max_delays
-    num_reasonable_delays, num_unreasonable_delays, num_padding_delays, num_total_delays (reasonable + unreasonable)
+    - Delays are taken from `paths.tau` (seconds, Sionna convention).
+    - Invalid delays are encoded as -1 in Sionna and are excluded from the statistics.
+    - Some paths may have no valid delays.
     """
-    mean_delays = []
-    delay_spreads = []
-    rms_delay_spreads = []
-    min_max_delays = []
-    num_reasonable_delays = []
-    num_unreasonable_delays = []
-    num_padding_delays = []
-    num_total_delays = []  # reasonable + unreasonable
+    mean_delays: List[float] = []
+    rms_delay_spreads: List[float] = []
+
     for paths in paths_per_tx:
         raw = paths.tau.numpy()
         delays = np.asarray(raw, dtype=np.float64).flatten()
-        reasonable = (delays >= min_delay_s) & (delays <= max_delay_s)
-        unreasonable = (delays < 0) | (delays > max_delay_s)
-        padding = (delays >= 0) & (delays < min_delay_s)
-        n_reasonable = int(np.sum(reasonable))
-        n_unreasonable = int(np.sum(unreasonable))
-        n_padding = int(np.sum(padding))
-        n_total = n_reasonable + n_unreasonable
-        num_reasonable_delays.append(n_reasonable)
-        num_unreasonable_delays.append(n_unreasonable)
-        num_padding_delays.append(n_padding)
-        num_total_delays.append(n_total)
-        if n_unreasonable > 0:
-            logger.info(
-                "get_delay_stats: %s reasonable, %s unreasonable; using delays in [%.0e, %.0e] s for stats",
-                n_reasonable, n_unreasonable, min_delay_s, max_delay_s,
-            )
-        if not np.any(reasonable):
+
+        # Keep only valid delays (>= 0); invalid ones are encoded as -1
+        valid_mask = delays >= 0.0
+        if not np.any(valid_mask):
+            # No valid paths for this TX
             mean_delays.append(np.nan)
-            delay_spreads.append(np.nan)
             rms_delay_spreads.append(np.nan)
-            min_max_delays.append((np.nan, np.nan))
             continue
-        d = delays[reasonable]
-        mean_delay = np.mean(d)
-        delay_spread = np.std(d)
-        rms_delay_spread = np.sqrt(np.mean((d - mean_delay) ** 2))
-        mean_delays.append(float(mean_delay))
-        delay_spreads.append(float(delay_spread))
-        rms_delay_spreads.append(float(rms_delay_spread))
-        min_max_delays.append((float(np.min(d)), float(np.max(d))))
-    return (
-        mean_delays, delay_spreads, rms_delay_spreads, min_max_delays,
-        num_reasonable_delays, num_unreasonable_delays, num_padding_delays, num_total_delays,
-    )
+
+        d = delays[valid_mask]
+        mean_delay = float(np.mean(d))
+        rms_delay_spread = float(np.sqrt(np.mean((d - mean_delay) ** 2)))
+
+        # min and max delays removed as per instructions
+        mean_delays.append(mean_delay)
+        rms_delay_spreads.append(rms_delay_spread)
+
+    return mean_delays, rms_delay_spreads
+
+
+def get_num_paths_histogram(paths_per_tx: List[Paths]) -> np.ndarray:
+    """
+    For each TX, compute a histogram over the number of valid paths per user,
+    based on `paths.tau`.
+
+    The returned object is a 2D array `path_count` such that:
+      - The first index **i** corresponds to the number of valid paths.
+      - The second index **j** corresponds to the TX index.
+      - `path_count[i, j]` is the (non-normalized) number of users for TX j
+        that have exactly i valid paths.
+    """
+    # First pass: compute, for each TX, the number of valid paths per user
+    # from `paths.tau`, and track the global maximum number of valid paths.
+    per_tx_valid_counts: List[np.ndarray] = []
+    max_valid_paths = 0
+
+    for paths in paths_per_tx:
+        tau = paths.tau.numpy()
+
+        if tau.size == 0:
+            counts = np.zeros(0, dtype=int)
+        else:
+            # Valid delays are >= 0; invalid ones are encoded as -1
+            valid_mask = tau >= 0.0
+            # Sum over the last axis (paths dimension) to get "number of valid paths per user"
+            counts = np.sum(valid_mask, axis=-1).astype(int).flatten()
+
+        per_tx_valid_counts.append(counts)
+
+        if counts.size > 0:
+            max_valid_paths = max(max_valid_paths, int(np.max(counts)))
+
+    num_txs = len(paths_per_tx)
+    # Shape: [i, j] = [num_valid_paths, tx_index]
+    path_count = np.zeros((max_valid_paths + 1, num_txs), dtype=int)
+
+    for j, counts in enumerate(per_tx_valid_counts):
+        for n in counts:
+            path_count[int(n), j] += 1
+
+    return path_count
