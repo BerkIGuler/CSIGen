@@ -1,6 +1,7 @@
 import numpy as np
 import colorsys
 import logging
+from typing import List
 import matplotlib.pyplot as plt
 import mitsuba as mi
 
@@ -482,4 +483,22 @@ def visualize_time_frequency_response(h_channel, title="Complex Channel Response
     plt.tight_layout()
     
     return fig
+
+
+def display_path_count_histogram(hist: List[int]):
+    """
+    Display a single bar histogram: hist[i] = number of users with i valid paths (for one TX).
+
+    Parameters
+    ----------
+    hist : list of int
+        Histogram for one TX; hist[i] is the number of users with exactly i valid paths.
+    """
+    fig, ax = plt.subplots(figsize=(6, 4))
+    x = list(range(len(hist)))
+    ax.bar(x, hist, color="steelblue", edgecolor="black", linewidth=0.5)
+    ax.set_xlabel("Number of valid paths")
+    ax.set_ylabel("Number of users")
     
+    plt.tight_layout()
+    plt.show()

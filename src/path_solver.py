@@ -270,44 +270,34 @@ def get_delay_stats(paths_per_tx: List[Paths]) -> Tuple[List[float], List[float]
     return mean_delays, rms_delay_spreads
 
 
-def get_num_paths_histogram(paths_per_tx: List[Paths]) -> np.ndarray:
+def get_num_paths_histogram(paths_per_tx: List[Paths]) -> List[List[int]]:
     """
     For each TX, compute a histogram over the number of valid paths per user,
     based on `paths.tau`.
 
-    The returned object is a 2D array `path_count` such that:
-      - The first index **i** corresponds to the number of valid paths.
-      - The second index **j** corresponds to the TX index.
-      - `path_count[i, j]` is the (non-normalized) number of users for TX j
+    Returns a list of lists, one per TX index. For TX j:
+      - path_count[j] is a list of length (max valid paths for that TX + 1).
+      - path_count[j][i] is the (non-normalized) number of users for TX j
         that have exactly i valid paths.
+    Inner list lengths can differ across TXs.
     """
-    # First pass: compute, for each TX, the number of valid paths per user
-    # from `paths.tau`, and track the global maximum number of valid paths.
-    per_tx_valid_counts: List[np.ndarray] = []
-    max_valid_paths = 0
+    path_count: List[List[int]] = []
 
     for paths in paths_per_tx:
         tau = paths.tau.numpy()
 
         if tau.size == 0:
-            counts = np.zeros(0, dtype=int)
+            hist = []
         else:
-            # Valid delays are >= 0; invalid ones are encoded as -1
-            valid_mask = tau >= 0.0
-            # Sum over the last axis (paths dimension) to get "number of valid paths per user"
-            counts = np.sum(valid_mask, axis=-1).astype(int).flatten()
-
-        per_tx_valid_counts.append(counts)
-
-        if counts.size > 0:
-            max_valid_paths = max(max_valid_paths, int(np.max(counts)))
-
-    num_txs = len(paths_per_tx)
-    # Shape: [i, j] = [num_valid_paths, tx_index]
-    path_count = np.zeros((max_valid_paths + 1, num_txs), dtype=int)
-
-    for j, counts in enumerate(per_tx_valid_counts):
-        for n in counts:
-            path_count[int(n), j] += 1
+            num_users = tau.shape[0]
+            valid_paths_hist = {}
+            for user_idx in range(num_users):
+                num_valid_paths = int(np.sum(tau[user_idx] > 0))
+                if num_valid_paths not in valid_paths_hist:
+                    valid_paths_hist[num_valid_paths] = 0
+                valid_paths_hist[num_valid_paths] += 1
+            max_n = max(valid_paths_hist.keys())
+            hist = [valid_paths_hist.get(i, 0) for i in range(max_n + 1)]
+        path_count.append(hist)
 
     return path_count
