@@ -485,6 +485,67 @@ def visualize_time_frequency_response(h_channel, title="Complex Channel Response
     return fig
 
 
+def visualize_antenna_frequency_response(h_channel, title="Antenna Frequency Response"):
+    """
+    Create a figure visualizing a complex channel frequency response across antennas and subcarriers.
+    
+    Creates two side-by-side plots showing magnitude and phase of the channel.
+    Subcarriers are on the y-axis and antenna indices on the x-axis.
+    
+    Parameters
+    ----------
+    h_channel : np.ndarray
+        Complex channel array with shape [num_subcarriers, num_antennas] (or will be transposed to this).
+        Assumes input already has subcarriers and antenna dimensions in correct order.
+    title : str
+        Title for the plot
+    
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure object containing the plots. User can call fig.savefig() to save or plt.show() to display.
+        
+    Examples
+    --------
+    >>> h = paths.cfr(...)  # shape: [num_rx, num_rx_ant, num_tx, num_tx_ant, num_ofdm_symbols, num_subcarriers]
+    >>> # Extract across antennas for one subcarrier: h[0, :, 0, 0, 0, :] -> [num_rx_ant, num_subcarriers]
+    >>> # Or extract across subcarriers for one antenna: h[0, 0, 0, 0, 0, :] -> [num_subcarriers]
+    >>> sample_channel = h[0, :, 0, 0, 0, :].T  # [num_subcarriers, num_rx_ant]
+    >>> fig = visualize_antenna_frequency_response(sample_channel, title="Antenna Frequency Response")
+    >>> fig.savefig("antenna_frequency_response.png")  # Save to file
+    >>> # or plt.show() to display interactively
+    """
+    h_channel = np.asarray(h_channel)
+    
+    if h_channel.ndim != 2:
+        raise ValueError(f"Expected 2D array, got shape {h_channel.shape}")
+    
+    # Compute magnitude and phase
+    magnitude = np.abs(h_channel)
+    phase = np.angle(h_channel)
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Plot magnitude (subcarriers on y-axis, antennas on x-axis)
+    im1 = ax1.imshow(magnitude, aspect='auto', origin='lower', cmap='viridis', interpolation='nearest')
+    ax1.set_xlabel('Subcarrier Index')
+    ax1.set_ylabel('Antenna Index')
+    ax1.set_title(f'{title} - Magnitude')
+    plt.colorbar(im1, ax=ax1, label='|H|')
+    
+    # Plot phase (subcarriers on y-axis, antennas on x-axis)
+    im2 = ax2.imshow(phase, aspect='auto', origin='lower', cmap='hsv', interpolation='nearest')
+    ax2.set_xlabel('Subcarrier Index')
+    ax2.set_ylabel('Antenna Index')
+    ax2.set_title(f'{title} - Phase')
+    plt.colorbar(im2, ax=ax2, label='∠H (radians)')
+    
+    plt.tight_layout()
+    
+    return fig
+
+
 def display_path_count_histogram(hist: List[int]):
     """
     Display a single bar histogram: hist[i] = number of users with i valid paths (for one TX).
