@@ -9,12 +9,14 @@ import logging
 from pathlib import Path
 from typing import Dict, Iterator, Any
 
+import numpy as np
+
 from src.scene_setup import setup_scene
 from src.base_station import set_tx_antenna_array, add_base_station
 from src.user_equipment import set_rx_antenna_array
 from src.radio_map import solve_radio_map, sample_user_positions, filter_positions_by_edge_distance
 from src.receivers import add_receivers_from_samples
-from src.path_solver import _solve_paths_for_single_tx
+from src.path_solver import _solve_paths_for_single_tx, get_valid_rx_mask
 from src.channel import compute_cfr_for_paths
 
 logger = logging.getLogger(__name__)
@@ -47,7 +49,7 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
         
         Radio Map:
         - radio_map_diffuse_reflection, radio_map_diffraction, radio_map_edge_diffraction
-        - radio_map_max_depth, radio_map_samples_per_tx
+        - radio_map_max_depth, radio_map_samples_per_tx, radio_map_seed
         
         User Sampling:
         - num_user_samples_per_tx, user_sample_seed, user_sample_min_val_db
@@ -156,7 +158,8 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
         edge_diffraction=config['radio_map_edge_diffraction'],
         diffraction_lit_region=config['radio_map_diffraction_lit_region'],
         max_depth=config['radio_map_max_depth'],
-        samples_per_tx=config['radio_map_samples_per_tx']
+        samples_per_tx=config['radio_map_samples_per_tx'],
+        seed=config['radio_map_seed'],
     )
     
     # Step 5: Sample user positions
@@ -232,6 +235,17 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             out_type=config['cfr_out_type'],
         )
 
+        # Keep only channels (receivers) with at least one valid path
+        valid_mask = get_valid_rx_mask(paths_tx)
+        num_total = len(valid_mask)
+        num_valid = int(np.sum(valid_mask))
+        if num_valid < num_total:
+            logger.info(
+                "TX %s: filtering out %s users with no valid paths (keeping %s of %s)",
+                tx_idx, num_total - num_valid, num_valid, num_total,
+            )
+        h_tx = h_tx[valid_mask]
+
         # Derive TX name and position
         bs_id = tx_idx // num_sectors
         sector_id = (tx_idx % num_sectors) + 1
@@ -241,28 +255,29 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
         if hasattr(tx_pos, 'numpy'):
             tx_pos = tx_pos.numpy()
 
-        # RX positions for this TX, aligned with CFR user axis
+        # RX positions for this TX, aligned with CFR user axis (before valid filter)
         if per_tx_users_only:
             start_idx = tx_idx * num_users_per_tx
             end_idx = start_idx + num_users_per_tx
-            rx_names = [f"UE_{i}" for i in range(start_idx, end_idx)]
+            rx_names_all = [f"UE_{i}" for i in range(start_idx, end_idx)]
         else:
-            rx_names = [f"UE_{i}" for i in range(total_users)]
+            rx_names_all = [f"UE_{i}" for i in range(total_users)]
 
-        import numpy as _np  # local import to avoid circulars
-
-        rx_positions = []
-        for rx_name in rx_names:
+        rx_positions_all = []
+        for rx_name in rx_names_all:
             rx = scene.get(rx_name)
             pos = rx.position
             if hasattr(pos, 'numpy'):
                 pos = pos.numpy()
             else:
-                pos = _np.array(pos)
-            rx_positions.append(pos)
-        rx_positions = _np.stack(rx_positions, axis=0)
+                pos = np.array(pos)
+            rx_positions_all.append(pos)
+        rx_positions_all = np.stack(rx_positions_all, axis=0)
+        # Restrict to receivers with at least one valid path (same order as h_tx)
+        rx_positions = rx_positions_all[valid_mask]
+        rx_names = [rx_names_all[i] for i in np.where(valid_mask)[0]]
 
-        # Prepare per-TX metadata
+        # Prepare per-TX metadata (rx_positions/rx_names and h_tx are restricted to valid channels)
         tx_metadata = {
             'tx_idx': tx_idx,
             'tx_name': tx_name,
@@ -273,6 +288,7 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             'num_users_per_tx': num_users_per_tx,
             'total_users': total_users,
             'num_sectors': num_sectors,
+            'num_valid_channels': num_valid,
             'cfr_shape': h_tx.shape,
             'cfr_dtype': str(h_tx.dtype),
             'config': config,

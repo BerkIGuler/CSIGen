@@ -40,7 +40,8 @@ radio_map_diffraction: true  # Signal bending around obstacles
 radio_map_edge_diffraction: true  # Diffraction at edges
 radio_map_diffraction_lit_region: false  # Diffraction in LoS regions
 radio_map_max_depth: 5  # Maximum ray-scene interactions per path
-radio_map_samples_per_tx: 100000000  # Number of samples per TX antenna array (10^8)
+radio_map_samples_per_tx: 1000000  # Number of samples per TX antenna array (10^6)
+radio_map_seed: 1  # Seed for radio map solver (reproducibility)
 
 # User sampling parameters
 num_user_samples_per_tx: 500  # Users sampled per TX array
@@ -99,8 +100,8 @@ mobility_presets:
 
 # Path solver parameters
 path_solver_max_depth: 5  # Maximum ray-scene interactions per path
-path_solver_max_num_paths_per_src: 1000000  # Maximum paths per source
-path_solver_samples_per_src: 1000000  # Ray samples per source
+path_solver_max_num_paths_per_src: 10000000  # Maximum paths per source (10^7)
+path_solver_samples_per_src: 10000000  # Ray samples per source (10^7)
 path_solver_synthetic_array: true  # Use synthetic array approximation for efficiency
 path_solver_los_mode: true  # Include line-of-sight paths
 path_solver_specular_reflection: true  # Mirror-like reflections

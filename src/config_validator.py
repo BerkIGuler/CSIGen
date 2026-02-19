@@ -118,6 +118,7 @@ class ChannelConfigModel(BaseModel):
     radio_map_diffraction_lit_region: bool = Field(..., description="Whether to include diffraction in the lit region")
     radio_map_max_depth: int = Field(..., ge=1, description="Maximum number of ray scene interactions")
     radio_map_samples_per_tx: int = Field(..., ge=1, description="Number of samples per source")
+    radio_map_seed: int = Field(..., description="Seed for radio map solver (reproducibility)")
     
     # User sampling parameters
     num_user_samples_per_tx: int = Field(..., ge=1, description="Number of user samples to generate per TX")

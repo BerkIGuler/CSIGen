@@ -90,7 +90,11 @@ def main():
             output_path=output_path,
             metadata=tx_metadata,
         )
-        logger.info(f"Saved channel data for TX {tx_idx} ({tx_metadata['tx_name']}) to {output_path}")
+        num_valid = tx_metadata.get('num_valid_channels', h_tx.shape[0])
+        logger.info(
+            "Saved channel data for TX %s (%s) to %s (%s valid channels)",
+            tx_idx, tx_metadata['tx_name'], output_path, num_valid,
+        )
 
     # Also save combined metadata summary (including the config and run info)
     metadata_path = output_dir / "metadata.yaml"
