@@ -3,11 +3,29 @@ Path solving utilities for efficient per-TX path computation.
 """
 
 from sionna.rt import PathSolver, Paths
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import logging
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def get_valid_rx_mask(paths: Paths) -> np.ndarray:
+    """
+    Return a boolean mask of shape (num_rx,) where True indicates that receiver
+    has at least one valid path (delay > 0). Use this to filter CFR or other
+    per-receiver data after computation.
+
+    Uses the same validity criterion as get_num_paths_histogram and get_delay_stats
+    (path is valid if tau > 0).
+    """
+    tau = paths.tau.numpy()
+    if tau.size == 0:
+        return np.array([], dtype=bool)
+    # tau shape: [num_rx, num_rx_ant, num_tx, num_tx_ant, num_paths] or [num_rx, num_tx, num_paths]
+    # For each receiver index (first axis), check if any path has tau > 0
+    valid_per_rx = np.any(tau > 0, axis=tuple(range(1, tau.ndim)))
+    return np.asarray(valid_per_rx, dtype=bool)
 
 
 def _solve_paths_for_single_tx(
@@ -224,16 +242,32 @@ def solve_paths_per_tx(
 
 def get_doppler_stats(paths_per_tx: List[Paths]) -> Tuple[List[float], List[float], List[Tuple[float, float]]]:
     """
-    Get Doppler statistics per TX: mean shift, spread (std), and (min, max) across all paths to all receivers.
+    Get Doppler statistics per TX: mean shift, spread (std), and (min, max).
+
+    Only paths with tau > 0 are included. Only receivers that have at least one
+    valid path are included (mask derived from paths.tau per TX).
     """
     mean_doppler_shifts = []
     doppler_spreads = []
     min_max_doppler_shifts = []
     for paths in paths_per_tx:
-        doppler_shifts = paths.doppler.numpy()
-        mean_doppler_shifts.append(np.mean(doppler_shifts))
-        doppler_spreads.append(np.std(doppler_shifts))
-        min_max_doppler_shifts.append((np.min(doppler_shifts), np.max(doppler_shifts)))
+        tau = np.asarray(paths.tau.numpy(), dtype=np.float64)
+        doppler = np.asarray(paths.doppler.numpy(), dtype=np.float64)
+        # Valid receivers: at least one path with tau > 0
+        valid_rx = np.any(tau > 0, axis=tuple(range(1, tau.ndim)))
+        tau = tau[valid_rx, ...]
+        doppler = doppler[valid_rx, ...]
+        # Only include doppler for valid paths (tau > 0)
+        valid_path = tau > 0
+        d = doppler[valid_path]
+        if d.size == 0:
+            mean_doppler_shifts.append(np.nan)
+            doppler_spreads.append(np.nan)
+            min_max_doppler_shifts.append((np.nan, np.nan))
+        else:
+            mean_doppler_shifts.append(float(np.mean(d)))
+            doppler_spreads.append(float(np.std(d)))
+            min_max_doppler_shifts.append((float(np.min(d)), float(np.max(d))))
     return mean_doppler_shifts, doppler_spreads, min_max_doppler_shifts
 
 def get_delay_stats(paths_per_tx: List[Paths]) -> Tuple[List[float], List[float]]:
@@ -241,20 +275,22 @@ def get_delay_stats(paths_per_tx: List[Paths]) -> Tuple[List[float], List[float]
     Compute per-TX delay statistics from `paths_per_tx`, discarding invalid entries.
 
     - Delays are taken from `paths.tau` (seconds, Sionna convention).
-    - Invalid delays are encoded as -1 in Sionna and are excluded from the statistics.
-    - Some paths may have no valid delays.
+    - Only paths with tau > 0 are included. Only receivers that have at least one
+      valid path are included (mask derived from paths.tau per TX).
     """
     mean_delays: List[float] = []
     rms_delay_spreads: List[float] = []
 
     for paths in paths_per_tx:
         raw = paths.tau.numpy()
-        delays = np.asarray(raw, dtype=np.float64).flatten()
-
-        # Keep only valid delays (>= 0); invalid ones are encoded as -1
-        valid_mask = delays >= 0.0
+        tau = np.asarray(raw, dtype=np.float64)
+        # Valid receivers: at least one path with tau > 0
+        valid_rx = np.any(tau > 0, axis=tuple(range(1, tau.ndim)))
+        tau = tau[valid_rx, ...]
+        delays = tau.flatten()
+        # Keep only valid path delays (tau > 0)
+        valid_mask = delays > 0
         if not np.any(valid_mask):
-            # No valid paths for this TX
             mean_delays.append(np.nan)
             rms_delay_spreads.append(np.nan)
             continue
@@ -262,18 +298,22 @@ def get_delay_stats(paths_per_tx: List[Paths]) -> Tuple[List[float], List[float]
         d = delays[valid_mask]
         mean_delay = float(np.mean(d))
         rms_delay_spread = float(np.sqrt(np.mean((d - mean_delay) ** 2)))
-
-        # min and max delays removed as per instructions
         mean_delays.append(mean_delay)
         rms_delay_spreads.append(rms_delay_spread)
 
     return mean_delays, rms_delay_spreads
 
 
-def get_num_paths_histogram(paths_per_tx: List[Paths]) -> List[List[int]]:
+def get_num_paths_histogram(
+    paths_per_tx: List[Paths],
+    valid_rx_mask_per_tx: Optional[List[np.ndarray]] = None,
+) -> List[List[int]]:
     """
     For each TX, compute a histogram over the number of valid paths per user,
     based on `paths.tau`.
+
+    If valid_rx_mask_per_tx is provided, only receivers with mask True are
+    included (e.g. to match CFR filtered to valid channels).
 
     Returns a list of lists, one per TX index. For TX j:
       - path_count[j] is a list of length (max valid paths for that TX + 1).
@@ -283,20 +323,25 @@ def get_num_paths_histogram(paths_per_tx: List[Paths]) -> List[List[int]]:
     """
     path_count: List[List[int]] = []
 
-    for paths in paths_per_tx:
+    for tx_idx, paths in enumerate(paths_per_tx):
         tau = paths.tau.numpy()
 
         if tau.size == 0:
             hist = []
         else:
             num_users = tau.shape[0]
+            if valid_rx_mask_per_tx is not None and tx_idx < len(valid_rx_mask_per_tx):
+                mask = np.asarray(valid_rx_mask_per_tx[tx_idx], dtype=bool)
+                user_indices = np.where(mask)[0]
+            else:
+                user_indices = np.arange(num_users)
             valid_paths_hist = {}
-            for user_idx in range(num_users):
+            for user_idx in user_indices:
                 num_valid_paths = int(np.sum(tau[user_idx] > 0))
                 if num_valid_paths not in valid_paths_hist:
                     valid_paths_hist[num_valid_paths] = 0
                 valid_paths_hist[num_valid_paths] += 1
-            max_n = max(valid_paths_hist.keys())
+            max_n = max(valid_paths_hist.keys()) if valid_paths_hist else 0
             hist = [valid_paths_hist.get(i, 0) for i in range(max_n + 1)]
         path_count.append(hist)
 
