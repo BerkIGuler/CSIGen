@@ -11,8 +11,8 @@ terrain_clip_margin: 15.0  # Margin around buildings when clipping (meters)
 user_shift_from_ground: 1.5  # UE height above ground (meters)
 
 # TX antenna array parameters
-tx_num_rows: 1  # Array dimensions (rows)
-tx_num_cols: 32  # Array dimensions (columns)
+tx_num_rows: 4  # Array dimensions (rows)
+tx_num_cols: 8  # Array dimensions (columns)
 tx_vertical_spacing: 0.5  # Element spacing in wavelengths (vertical)
 tx_horizontal_spacing: 0.5  # Element spacing in wavelengths (horizontal)
 tx_pattern: "tr38901"  # Radiation pattern: tr38901 (3GPP), dipole, iso, or hw_dipole
@@ -119,6 +119,6 @@ num_ofdm_symbols: 14  # Time-domain symbols
 subcarrier_spacing: 30000.0  # Spacing in Hz
 
 # Channel Frequency Response (CFR) parameters
-cfr_normalize_delays: true  # Normalize delays relative to first path
+cfr_normalize_delays: false  # Normalize delays relative to first path
 cfr_normalize: false  # Normalize CFR magnitude
 cfr_out_type: "numpy"  # Output backend
