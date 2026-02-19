@@ -9,3 +9,6 @@ examples/output/*
 # Ignore all scenes except boston_1
 scenes/*
 !scenes/boston_1/
+!scenes/chicago_1/
+!scenes/nyc_1/
+!scenes/sf_1/
