@@ -10,6 +10,7 @@
 \author{Berkay Guler}
 \date{January 2026}
 
+
 \begin{document}
 
 \maketitle
@@ -103,7 +104,8 @@ radio_map_diffraction: true
 radio_map_edge_diffraction: true
 radio_map_diffraction_lit_region: false
 radio_map_max_depth: 5
-radio_map_samples_per_tx: 100000000
+radio_map_samples_per_tx: 1000000  # 10^6
+radio_map_seed: 1
 
 # User sampling parameters
 num_user_samples_per_tx: 1000
@@ -155,8 +157,8 @@ mobility_presets:
 
 # Path solver parameters
 path_solver_max_depth: 5
-path_solver_max_num_paths_per_src: 1000000
-path_solver_samples_per_src: 1000000
+path_solver_max_num_paths_per_src: 10000000  # 10^7
+path_solver_samples_per_src: 10000000  # 10^7
 path_solver_synthetic_array: true
 path_solver_los_mode: true
 path_solver_specular_reflection: true
@@ -213,15 +215,16 @@ cfr_out_type: "numpy"
   \item \texttt{tx\_power\_dbm}: Transmit power per array (dBm).
 \end{itemize}
 
-\subsubsection{Ray Tracing Parameters}
+\subsubsection{Ray Tracing Parameters (Radio Map and Path Solver)}
 These control ray-scene interactions for both radio map and path solver. See \href{https://arxiv.org/pdf/2504.21719}{Sionna RT: Technical Report} for details.
 \begin{itemize}
-  \item \texttt{max\_depth}: Maximum ray-scene interactions per path.
-  \item \texttt{specular\_reflection}: Mirror-like reflections.
-  \item \texttt{diffuse\_reflection}: Scattering from rough surfaces.
+  \item \texttt{radio\_map\_max\_depth}, \texttt{path\_solver\_max\_depth}: Maximum ray-scene interactions per path.
+  \item \texttt{radio\_map\_samples\_per\_tx}: Number of samples per TX for radio map (e.g., $10^6$).
+  \item \texttt{radio\_map\_seed}: Seed for radio map solver (reproducibility).
+  \item \texttt{path\_solver\_max\_num\_paths\_per\_src}, \texttt{path\_solver\_samples\_per\_src}: Max paths and ray samples per source (e.g., $10^7$).
+  \item \texttt{specular\_reflection}, \texttt{diffuse\_reflection}: Mirror-like and rough-surface scattering.
   \item \texttt{refraction}: Transmission through materials (Snell's law).
-  \item \texttt{diffraction}: Signal bending around obstacles.
-  \item \texttt{edge\_diffraction}: Diffraction at edges.
+  \item \texttt{diffraction}, \texttt{edge\_diffraction}: Signal bending and edge diffraction.
   \item \texttt{diffraction\_lit\_region}: Diffraction in LoS regions.
 \end{itemize}
 
@@ -280,6 +283,7 @@ The generation pipeline transforms a configuration file into channel frequency r
   \item \textbf{Receiver Creation}: Create receivers with mobility parameters.
   \item \textbf{Path Solving}: Compute ray-traced paths per TX.
   \item \textbf{CFR Computation}: Convert paths to frequency response arrays.
+  \item \textbf{Valid-Path Filtering}: Only receivers with at least one valid path (delay $> 0$) are kept; channels with no valid paths are excluded from the output.
 \end{enumerate}
 
 \subsection{Key Design Choices}
@@ -379,13 +383,51 @@ After user sampling, positions can be filtered to remove users too close to the 
   \label{fig:edge_user_filter}
 \end{figure}
 
+\subsection{Valid-Path Filtering}
+
+After path solving and CFR computation, the pipeline keeps only channels (TX--RX pairs) for which at least one path has non-zero delay. Receivers with no valid paths are dropped, and the saved CFR arrays and metadata (e.g., \texttt{rx\_positions}, \texttt{rx\_names}) are restricted to this subset. The metadata field \texttt{num\_valid\_channels} reports the count of valid channels per TX. We include a histogram of number of paths from a TX to all sampled users displayed in Fig.~\ref{fig:num_paths}.
+
+\begin{figure}[h]
+  \centering
+  \begin{subfigure}{0.49\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{figures/boston_path_histogram_a.png}
+    \caption{The TX antenna (red) and sampled users (brown) in Boston}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.49\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{figures/boston_path_hist_b.png}
+    \caption{Histogram of valid paths}
+  \end{subfigure}
+  \caption{Distribution of number of paths after removing invalid users}
+  \label{fig:num_paths}
+\end{figure}
+
+\subsection{Channel Frequency Response}
+After the paths are computed from a TX to a set of RXs, the channel frequency response can be derived from the path gains and delays. For \texttt{mobility\_preset="vehicular"}, \texttt{num\_subcarriers=32}, \texttt{tx\_num\_rows=1}, \texttt{tx\_num\_cols=32}, \texttt{rx\_num\_rows=1}, \texttt{rx\_num\_cols=1}, \texttt{num\_ofdm\_symbols=14}, and \texttt{subcarrier\_spacing=30}\,KHz, we include the time-frequency response for a fixed TX antenna index in Fig.~\ref{fig:cfr} and TX antenna-frequency response for a fixed OFDM symbol in Fig.~\ref{fig:afr}.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.9\linewidth]{figures/cfr.png}
+    \caption{Time-frequency response (magnitude on the left, phase on the right)}
+    \label{fig:cfr}
+\end{figure}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.9\linewidth]{figures/boston_afr.png}
+    \caption{TX antenna-frequency response (magnitude on the left, phase on the right)}
+    \label{fig:afr}
+\end{figure}
+
 \subsection{Performance Optimizations}
 
 \begin{itemize}
   \item \textbf{Synthetic Array}: Treats array as continuous aperture for faster computation.
   \item \textbf{Per-TX Solving}: Reduces complexity; enables large-scale generation.
   \item \textbf{TX Association Filtering}: Processes only associated users per TX.
-  \item \textbf{Radio Map Pre-filtering}: Uses fewer samples than detailed path solving for efficient coverage estimation.
+  \item \textbf{Radio Map Pre-filtering}: Uses fewer samples (e.g., $10^6$) than detailed path solving (e.g., $10^7$) for efficient coverage estimation.
 \end{itemize}
 
 \clearpage

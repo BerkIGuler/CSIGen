@@ -25,7 +25,8 @@ def solve_radio_map(
     edge_diffraction: bool = True,
     diffraction_lit_region: bool = False,
     max_depth: int = 5,
-    samples_per_tx: int = 10**8
+    samples_per_tx: int = 10**8,
+    seed: int = 1
 ):
     """
     Solve radio map for the scene.
@@ -72,6 +73,8 @@ def solve_radio_map(
         Maximum number of ray scene interactions
     samples_per_tx : int, default=10**8
         Number of samples per TX antenna array
+    seed : int, default=1
+        Random seed for the radio map solver (reproducibility)
     
     Returns
     -------
@@ -126,7 +129,8 @@ def solve_radio_map(
         'edge_diffraction': edge_diffraction,
         'diffraction_lit_region': diffraction_lit_region,
         'max_depth': max_depth,
-        'samples_per_tx': samples_per_tx
+        'samples_per_tx': samples_per_tx,
+        'seed': seed,
     }
     
     # Add grid parameters only if measurement_surface is None
