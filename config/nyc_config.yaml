@@ -44,7 +44,7 @@ radio_map_samples_per_tx: 1000000  # Number of samples per TX antenna array (10^
 radio_map_seed: 1  # Seed for radio map solver (reproducibility)
 
 # User sampling parameters
-num_user_samples_per_tx: 500  # Users sampled per TX array
+num_user_samples_per_tx: 250  # Users sampled per TX array
 user_sample_seed: 1  # Random seed for reproducibility
 user_sample_min_val_db: -150  # Coverage thresholds (dB) - minimum
 user_sample_max_val_db: 0  # Coverage thresholds (dB) - maximum
