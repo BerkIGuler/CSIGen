@@ -457,7 +457,6 @@ def visualize_time_frequency_response(h_channel, title="Complex Channel Response
     # Transpose to ensure: subcarriers on y-axis, OFDM symbols on x-axis
     # imshow treats first dim as rows (y) and second dim as columns (x)
     h_channel = h_channel.T  # Now shape is [num_subcarriers, num_ofdm_symbols]
-    num_subcarriers, num_ofdm_symbols = h_channel.shape
     
     # Compute magnitude and phase
     magnitude = np.abs(h_channel)
@@ -483,8 +482,69 @@ def visualize_time_frequency_response(h_channel, title="Complex Channel Response
     plt.tight_layout()
     
     return fig
+    
+    
+# visualize spatial response of a channel between TX and RX antenna arrays
+def visualize_spatial_response(h_spatial, title: str = "Spatial Response (Tx vs Rx)"):
+    """
+    Visualize the spatial response between a TX array and an RX array.
 
+    Parameters
+    ----------
+    h_spatial : np.ndarray
+        Complex array with shape [num_tx_antennas, num_rx_antennas].
+        For example, with 64 TX elements and 4 RX elements, the shape
+        should be [64, 4].
+    title : str
+        Title for the plot.
 
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure object containing the plots. User can call fig.savefig()
+        to save or plt.show() to display.
+
+    Examples
+    --------
+    >>> # Assume CFR shape: [num_rx, num_rx_ant, num_tx, num_tx_ant, num_ofdm_symbols, num_subcarriers]
+    >>> # Extract one user, one TX, one OFDM symbol and one subcarrier:
+    >>> h_example = cfr[0, :, 0, :, 0, 0]        # [num_rx_ant, num_tx_ant]
+    >>> h_spatial = h_example.T                  # [num_tx_ant, num_rx_ant]
+    >>> fig = visualize_spatial_response(h_spatial, title="Spatial Response (Tx vs Rx)")
+    >>> fig.savefig("spatial_response_tx_rx.png")
+    """
+    h_spatial = np.asarray(h_spatial)
+    
+    if h_spatial.ndim != 2:
+        raise ValueError(f"Expected 2D array, got shape {h_spatial.shape}")
+    
+    # Compute magnitude and phase
+    magnitude = np.abs(h_spatial)
+    phase = np.angle(h_spatial)
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Magnitude: y-axis = TX antenna index, x-axis = RX antenna index
+    im1 = ax1.imshow(magnitude, aspect="auto", origin="lower",
+                     cmap="viridis", interpolation="nearest")
+    ax1.set_xlabel("RX Antenna Index")
+    ax1.set_ylabel("TX Antenna Index")
+    ax1.set_title(f"{title} - Magnitude")
+    plt.colorbar(im1, ax=ax1, label="|H|")
+    
+    # Phase: y-axis = TX antenna index, x-axis = RX antenna index
+    im2 = ax2.imshow(phase, aspect="auto", origin="lower",
+                     cmap="hsv", interpolation="nearest")
+    ax2.set_xlabel("RX Antenna Index")
+    ax2.set_ylabel("TX Antenna Index")
+    ax2.set_title(f"{title} - Phase")
+    plt.colorbar(im2, ax=ax2, label="∠H (radians)")
+    
+    plt.tight_layout()
+    
+    return fig
+    
+    
 def visualize_antenna_frequency_response(h_channel, title="Antenna Frequency Response"):
     """
     Create a figure visualizing a complex channel frequency response across antennas and subcarriers.
