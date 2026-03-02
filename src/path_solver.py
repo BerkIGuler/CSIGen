@@ -3,6 +3,7 @@ Path solving utilities for efficient per-TX path computation.
 """
 
 from sionna.rt import PathSolver, Paths
+from sionna.rt.constants import InteractionType
 from typing import List, Optional, Tuple
 import logging
 import numpy as np
@@ -10,22 +11,65 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def get_valid_rx_mask(paths: Paths) -> np.ndarray:
+def _compute_rx_valid_and_los_masks(paths: Paths) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Return a boolean mask of shape (num_rx,) where True indicates that receiver
-    has at least one valid path (delay > 0). Use this to filter CFR or other
-    per-receiver data after computation.
+    Internal helper to compute both:
+      - valid_mask: boolean array of shape (num_rx,), True if RX has at least
+        one valid path (tau > 0)
+      - rx_state_mask: integer array of shape (num_rx,) with values
+            1  : RX has at least one valid pure LoS path
+            0  : RX has valid paths but none purely LoS (only NLoS)
+           -1  : RX has no valid paths
 
-    Uses the same validity criterion as get_num_paths_histogram and get_delay_stats
-    (path is valid if tau > 0).
+    This does a single pass over tau and interactions to avoid duplicate work.
     """
     tau = paths.tau.numpy()
     if tau.size == 0:
-        return np.array([], dtype=bool)
-    # tau shape: [num_rx, num_rx_ant, num_tx, num_tx_ant, num_paths] or [num_rx, num_tx, num_paths]
-    # For each receiver index (first axis), check if any path has tau > 0
-    valid_per_rx = np.any(tau > 0, axis=tuple(range(1, tau.ndim)))
-    return np.asarray(valid_per_rx, dtype=bool)
+        return np.array([], dtype=bool), np.array([], dtype=int)
+
+    tau = np.asarray(tau, dtype=np.float64)
+    # Valid paths per ray: same criterion as other helpers (tau > 0)
+    valid_path = tau > 0
+
+    # interactions shape: [max_depth, num_rx, ..., num_paths]
+    interactions = paths.interactions.numpy()
+    interactions = np.asarray(interactions, dtype=np.uint32)
+    # For each path, check if all depths have InteractionType.NONE
+    # Result has same shape as tau: [num_rx, ..., num_paths]
+    is_los_per_path = np.all(interactions == InteractionType.NONE, axis=0)
+
+    valid_los = valid_path & is_los_per_path
+
+    # Collapse over all non-receiver axes to get per-RX flags
+    path_axes = tuple(range(1, valid_path.ndim))
+    valid_mask = np.any(valid_path, axis=path_axes)
+    has_los = np.any(valid_los, axis=path_axes)
+
+    num_rx = tau.shape[0]
+    mask = np.full(num_rx, -1, dtype=int)
+    mask[valid_mask] = 0
+    mask[has_los] = 1
+    return np.asarray(valid_mask, dtype=bool), mask
+
+
+def get_valid_rx_mask(paths: Paths) -> np.ndarray:
+    """
+    Public helper: return boolean validity mask per RX.
+
+    See `_compute_rx_valid_and_los_masks` for details.
+    """
+    valid_mask, _ = _compute_rx_valid_and_los_masks(paths)
+    return valid_mask
+
+
+def get_rx_los_nlos_mask(paths: Paths) -> np.ndarray:
+    """
+    Public helper: return integer LOS/NLOS/invalid mask per RX.
+
+    See `_compute_rx_valid_and_los_masks` for details.
+    """
+    _, rx_state_mask = _compute_rx_valid_and_los_masks(paths)
+    return rx_state_mask
 
 
 def _solve_paths_for_single_tx(

@@ -16,7 +16,12 @@ from src.base_station import set_tx_antenna_array, add_base_station
 from src.user_equipment import set_rx_antenna_array
 from src.radio_map import solve_radio_map, sample_user_positions, filter_positions_by_edge_distance
 from src.receivers import add_receivers_from_samples
-from src.path_solver import _solve_paths_for_single_tx, get_valid_rx_mask
+from src.path_solver import (
+    _solve_paths_for_single_tx,
+    get_valid_rx_mask,
+    get_rx_los_nlos_mask,
+    _compute_rx_valid_and_los_masks,
+)
 from src.channel import compute_cfr_for_paths
 
 logger = logging.getLogger(__name__)
@@ -81,8 +86,9 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
         Per-TX dictionary with keys:
         - 'tx_idx': int
         - 'tx_name': str
-        - 'h_tx': np.ndarray (CFR for this TX)
-        - 'tx_metadata': dict with TX/RX positions and global config-derived info
+        - 'h_tx': np.ndarray (CFR for this TX; only valid channels)
+        - 'tx_metadata': dict with TX/RX positions, global config-derived info,
+          and per-channel metadata such as a LOS/NLOS indicator array
     """
     # Extract config parameters
     scene_xml_path = Path(config['scene_xml_path'])
@@ -235,15 +241,29 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             out_type=config['cfr_out_type'],
         )
 
-        # Keep only channels (receivers) with at least one valid path
-        valid_mask = get_valid_rx_mask(paths_tx)
+        # Per-RX validity and LOS/NLOS determination (single pass over tau & interactions)
+        valid_mask, rx_state_mask = _compute_rx_valid_and_los_masks(paths_tx)
         num_total = len(valid_mask)
         num_valid = int(np.sum(valid_mask))
+        # Binary LOS indicator aligned with the *filtered* CFR user axis
+        los_binary = (rx_state_mask[valid_mask] == 1).astype(np.int32)
+        num_los = int(np.sum(los_binary))
+        num_nlos = int(num_valid - num_los)
         if num_valid < num_total:
             logger.info(
-                "TX %s: filtering out %s users with no valid paths (keeping %s of %s)",
-                tx_idx, num_total - num_valid, num_valid, num_total,
+                (
+                    "TX %s: filtering out %s users with no valid paths "
+                    "(keeping %s of %s; LoS=%s, NLoS=%s)"
+                ),
+                tx_idx,
+                num_total - num_valid,
+                num_valid,
+                num_total,
+                num_los,
+                num_nlos,
             )
+
+        # Keep only channels (receivers) with at least one valid path
         h_tx = h_tx[valid_mask]
 
         # Derive TX name and position
@@ -284,6 +304,8 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             'tx_position': tx_pos,
             'rx_positions': rx_positions,
             'rx_names': rx_names,
+            # Per-valid-channel LOS indicator: 1 = LoS, 0 = NLoS
+            'los_binary': los_binary,
             'num_txs': num_txs_actual,
             'num_users_per_tx': num_users_per_tx,
             'total_users': total_users,
