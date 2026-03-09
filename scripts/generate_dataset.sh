@@ -1,5 +1,5 @@
 #!/bin/bash
-# Generate dataset by running sample_run.py for each config file
+# Generate dataset by running scripts/run.py for each config file
 
 set -e  # Exit on error
 
@@ -10,18 +10,18 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 # Change to project root directory
 cd "$PROJECT_ROOT"
 
-# Config files to process
+# Config files to process (one per city)
 CONFIGS=(
     "config/boston_config.yaml"
+    "config/chicago_config.yaml"
     "config/nyc_config.yaml"
     "config/sf_config.yaml"
-    "config/chicago_config.yaml"
 )
 
 echo "Starting dataset generation for ${#CONFIGS[@]} configs..."
 echo "=========================================="
 
-# Run sample_run.py for each config
+# Run scripts/run.py for each config
 for config in "${CONFIGS[@]}"; do
     if [ ! -f "$config" ]; then
         echo "Warning: Config file not found: $config"
@@ -31,7 +31,7 @@ for config in "${CONFIGS[@]}"; do
     echo ""
     echo "Processing: $config"
     echo "----------------------------------------"
-    python sample_run.py --config "$config"
+    python scripts/run.py --config "$config"
     
     if [ $? -eq 0 ]; then
         echo "✓ Successfully completed: $config"
