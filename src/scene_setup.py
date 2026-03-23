@@ -26,6 +26,7 @@ def setup_scene(
     clip_terrain: bool = True,
     terrain_clip_margin: float = 15.0,
     user_shift_from_ground: float = 1.5,
+    override_ground_material: Optional[str] = None,
     merge_shapes: bool = False
 ) -> Tuple[Any, dict, Optional[Any], list]:
     """
@@ -57,6 +58,8 @@ def setup_scene(
         Margin in meters around buildings when clipping terrain
     user_shift_from_ground : float, default=1.5
         Up shift in meters of users from the ground plane
+    override_ground_material : str or None, default=None
+        Optional override for ground material. Currently supports "concrete".
     merge_shapes : bool, default=False
         Whether to merge building shapes (False recommended for building extraction)
     
@@ -70,6 +73,28 @@ def setup_scene(
         - antenna_information: List of (building_id, antenna_position) tuples
     """
     scene = load_scene(scene_xml_path, merge_shapes=merge_shapes)
+
+    if override_ground_material is not None:
+        if override_ground_material != "concrete":
+            raise ValueError(
+                f"Unsupported override_ground_material: {override_ground_material}. "
+                "Supported values: None, 'concrete'."
+            )
+        ground_obj = scene.objects.get("ground")
+        if ground_obj is None:
+            logger.warning(
+                "Requested ground material override to concrete, but no 'ground' object exists in scene."
+            )
+        else:
+            concrete_candidates = ["itu_concrete", "mat-itu_concrete"]
+            concrete_name = next((name for name in concrete_candidates if scene.get(name) is not None), None)
+            if concrete_name is None:
+                raise ValueError(
+                    "Ground material override requested ('concrete') but no concrete material "
+                    f"found in scene. Tried: {concrete_candidates}"
+                )
+            ground_obj.radio_material = concrete_name
+            logger.info("Overrode ground material to %s", concrete_name)
     
     # Set carrier frequency
     scene.frequency = carrier_frequency

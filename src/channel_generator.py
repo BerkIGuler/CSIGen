@@ -101,6 +101,7 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
     clip_terrain = config['clip_terrain_to_buildings']
     terrain_clip_margin = config['terrain_clip_margin']
     user_shift_from_ground = config['user_shift_from_ground']
+    override_ground_material = config.get('override_ground_material')
     
     # Step 1: Setup scene
     logger.info("Step 1: Setting up scene...")
@@ -112,7 +113,8 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
         num_deployment_buildings=num_deployment_buildings,
         clip_terrain=clip_terrain,
         terrain_clip_margin=terrain_clip_margin,
-        user_shift_from_ground=user_shift_from_ground
+        user_shift_from_ground=user_shift_from_ground,
+        override_ground_material=override_ground_material,
     )
     
     # Step 2: Set antenna arrays

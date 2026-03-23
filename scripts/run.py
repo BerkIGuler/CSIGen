@@ -8,8 +8,15 @@ This script demonstrates how to:
 """
 
 import argparse
-import yaml
+import sys
 from pathlib import Path
+
+# Project root on path (script lives in scripts/, imports use top-level `src`)
+_root = Path(__file__).resolve().parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+    
+import yaml
 from datetime import datetime
 import logging
 
