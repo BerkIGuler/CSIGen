@@ -94,6 +94,13 @@ def setup_scene(
                     f"found in scene. Tried: {concrete_candidates}"
                 )
             ground_obj.radio_material = concrete_name
+            # Sionna updates all registered radio materials on frequency changes.
+            # Remove wet-ground aliases so unsupported wet-ground frequency models
+            # do not fail even after ground reassignment.
+            for wet_name in ("wet_ground", "itu_wet_ground", "mat-itu_wet_ground"):
+                wet_mat = scene.get(wet_name)
+                if wet_mat is not None:
+                    scene.remove(wet_name)
             logger.info("Overrode ground material to %s", concrete_name)
     
     # Set carrier frequency
