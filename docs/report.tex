@@ -282,8 +282,8 @@ The generation pipeline transforms a configuration file into channel frequency r
   \item \textbf{Edge Filtering}: Optionally filter users too close to measurement surface edges (if \texttt{scene\_edge\_epsilon} $> 0$).
   \item \textbf{Receiver Creation}: Create receivers with mobility parameters.
   \item \textbf{Path Solving}: Compute ray-traced paths per TX.
-  \item \textbf{CFR Computation}: Convert paths to frequency response arrays.
-  \item \textbf{Valid-Path Filtering}: Only receivers with at least one valid path (delay $> 0$) are kept; channels with no valid paths are excluded from the output.
+  \item \textbf{CFR Computation}: Convert paths to frequency response arrays (one tensor per TX over all receivers considered for that TX).
+  \item \textbf{Valid-Path Filtering and LoS/NLOS Labels}: After CFR is built, path delays and Sionna interaction types are evaluated in a single pass (\texttt{\_compute\_rx\_valid\_and\_los\_masks}). Receivers without any path with strictly positive delay ($\tau > 0$) are invalid and dropped. For each remaining (valid) channel, a binary line-of-sight flag is set: \texttt{1} if at least one valid path is pure LoS (all ray--scene interactions along that path are \texttt{InteractionType.NONE}), and \texttt{0} if all valid paths involve at least one non-trivial interaction (NLoS). The saved CFR tensor, \texttt{rx\_positions}, and \texttt{rx\_names} are sliced to valid channels only. Per-TX metadata includes the transmit antenna position (\texttt{tx\_position}), receive positions for valid channels (\texttt{rx\_positions}), corresponding receiver names (\texttt{rx\_names}), \texttt{num\_valid\_channels}, and \texttt{los\_binary} (length equal to the number of valid channels, aligned with the CFR user axis).
 \end{enumerate}
 
 \subsection{Key Design Choices}
@@ -383,9 +383,9 @@ After user sampling, positions can be filtered to remove users too close to the 
   \label{fig:edge_user_filter}
 \end{figure}
 
-\subsection{Valid-Path Filtering}
+\subsection{Valid-Path Filtering and LoS/NLOS Labels}
 
-After path solving and CFR computation, the pipeline keeps only channels (TX--RX pairs) for which at least one path has non-zero delay. Receivers with no valid paths are dropped, and the saved CFR arrays and metadata (e.g., \texttt{rx\_positions}, \texttt{rx\_names}) are restricted to this subset. The metadata field \texttt{num\_valid\_channels} reports the count of valid channels per TX. We include a histogram of number of paths from a TX to all sampled users displayed in Fig.~\ref{fig:num_paths}.
+After path solving and CFR computation, the pipeline evaluates validity and LoS/NLOS jointly from the \texttt{Paths} object: path delays ($\tau > 0$) and per-path interaction records (Sionna \texttt{interactions}) determine which receivers have any valid path and whether a valid channel has at least one pure LoS path (no reflections, diffraction, etc.). Receivers with no valid paths are dropped; CFR arrays and aligned metadata (\texttt{rx\_positions}, \texttt{rx\_names}) are restricted to the valid subset. Per-TX metadata also stores the serving sector antenna position as \texttt{tx\_position}. The field \texttt{num\_valid\_channels} gives the count of valid channels, and \texttt{los\_binary} is a length-\texttt{num\_valid\_channels} array with \texttt{1} for LoS and \texttt{0} for NLoS, in the same order as rows of the filtered CFR. We include a histogram of number of paths from a TX to all sampled users displayed in Fig.~\ref{fig:num_paths}.
 
 \begin{figure}[h]
   \centering
