@@ -12,10 +12,11 @@ cd "$PROJECT_ROOT"
 
 # Config files to process (one per city)
 CONFIGS=(
-    "config/boston_config_test.yaml"
-    "config/chicago_config_test.yaml"
-    "config/nyc_config_test.yaml"
-    "config/sf_config_test.yaml"
+    # "config/boston_config_test.yaml"
+    # "config/chicago_config_test.yaml"
+    # "config/nyc_config_test.yaml"
+    # "config/sf_config_test.yaml"
+    "config/la_config_test.yaml"
 )
 
 echo "Starting dataset generation for ${#CONFIGS[@]} configs..."
