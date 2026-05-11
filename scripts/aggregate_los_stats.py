@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dataset-root",
         type=Path,
-        default=Path("/opt/shared/datasets/CSIGen/TemporalWiMAE"),
+        default=Path("/home/berkay/Desktop/research/datasets/CSIGen/TemporalWiMAE/ood_test_35"),
         help=(
             "Root directory containing per-city channel files, matching "
             "`examples/visualize_dataset_by_los.ipynb` "

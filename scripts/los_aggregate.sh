@@ -12,10 +12,11 @@ cd "$PROJECT_ROOT"
 
 # Cities to process (must match scene / dataset directory names)
 CITIES=(
-    "boston_1"
-    "chicago_1"
-    "nyc_1"
-    "sf_1"
+    # "boston_1"
+    # "chicago_1"
+    # "nyc_1"
+    # "sf_1"
+    "la_1"
 )
 
 echo "Starting LoS aggregation for ${#CITIES[@]} cities..."
