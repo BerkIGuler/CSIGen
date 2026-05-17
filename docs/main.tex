@@ -219,6 +219,7 @@ cfr_out_type: "numpy"  # Output backend
 \end{itemize}
 
 \subsubsection{Ray Tracing Parameters (Radio Map and Path Solver)}
+\label{subsec:ray-tracing-radio-path}
 These control ray-scene interactions for both the radio map and the path solver. The same physical toggles appear twice in YAML: each boolean is prefixed \texttt{radio\_map\_} for \texttt{RadioMapSolver} and \texttt{path\_solver\_} for \texttt{PathSolver}, so the two stages can be configured independently (e.g., fewer interactions or samples for the map, more for detailed paths). See \href{https://arxiv.org/pdf/2504.21719}{Sionna RT: Technical Report} for interaction semantics.
 \begin{itemize}
   \item \texttt{radio\_map\_max\_depth}, \texttt{path\_solver\_max\_depth}: Maximum ray-scene interactions per path.
@@ -252,6 +253,7 @@ The top-level key \texttt{mobility\_preset} must name one entry in the \texttt{m
 \end{itemize}
 
 \subsubsection{Path Solver Parameters}
+Beyond the knobs listed here, path solving also uses \texttt{path\_solver\_max\_depth} and the \texttt{path\_solver\_*} interaction toggles (specular reflection, diffuse reflection, refraction, diffraction, edge diffraction, diffraction-lit region). Those mirror the \texttt{radio\_map\_*} keys so the solver and radio map can diverge independently; see~\S~\ref{subsec:ray-tracing-radio-path}.
 \begin{itemize}
   \item \texttt{path\_solver\_max\_num\_paths\_per\_src}: Maximum paths per source.
   \item \texttt{path\_solver\_samples\_per\_src}: Ray samples per source.
@@ -268,7 +270,7 @@ The top-level key \texttt{mobility\_preset} must name one entry in the \texttt{m
   \item \texttt{subcarrier\_spacing}: Spacing in Hz.
   \item \texttt{cfr\_normalize\_delays}: Normalize delays relative to first path.
   \item \texttt{cfr\_normalize}: Normalize CFR magnitude.
-  \item \texttt{cfr\_out\_type}: Output backend (numpy, TensorFlow, PyTorch, JAX, Dr.Jit).
+  \item \texttt{cfr\_out\_type}: Output tensor backend token (YAML string). Allowed values mirror \texttt{src.config\_validator}: \texttt{numpy}, \texttt{tf} (TensorFlow), \texttt{torch}, \texttt{jax}, \texttt{drjit}.
 \end{itemize}
 
 \clearpage
@@ -477,5 +479,12 @@ We generated a number of scenes using \texttt{scenegen} tool. These scenes are i
     \caption{\texttt{sf\_1} scene}
 \end{figure}
 
+\subsection{Los Angeles Downtown}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\linewidth]{figures/la_1_cm.png}
+    \caption{\texttt{la\_1} scene}
+\end{figure}
 
 \end{document}

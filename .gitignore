@@ -13,5 +13,3 @@ scenes/*
 !scenes/nyc_1/
 !scenes/sf_1/
 !scenes/la_1/
-
-aggregate_plots/*
