@@ -5,6 +5,7 @@ examples/output/*
 *.DS_Store
 *.log
 *.npz
+examples/notebook_los_*.yaml
 
 # Ignore all scenes except boston_1
 scenes/*
