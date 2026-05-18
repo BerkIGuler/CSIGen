@@ -6,6 +6,7 @@ examples/output/*
 *.log
 *.npz
 examples/notebook_los_*.yaml
+examples/notebook_realistic_*.yaml
 
 # Ignore all scenes except boston_1
 scenes/*
