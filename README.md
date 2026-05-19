@@ -1,6 +1,6 @@
 # CSIGen
 
-Config-driven wireless channel dataset generation built on **Sionna RT**. This README is short on purpose. Use the sections below in order—or jump to **`docs/main.pdf`** for the full manual.
+Config-driven wireless channel dataset generation built on **Sionna RT**. This README is short on purpose. Use the sections below in order. Or, jump to **`docs/main.pdf`** for the full manual.
 
 ## Generating channels from a config
 
