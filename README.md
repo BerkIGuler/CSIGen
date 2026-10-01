@@ -2,6 +2,8 @@
 
 Config-driven wireless channel dataset generation built on **Sionna RT**. This README is short on purpose. Use the sections below in order. Or, jump to **`docs/main.pdf`** for the full manual.
 
+## A sample dataset generated with this tool can be found [here](https://huggingface.co/datasets/BerkIGuler/PilotWiMAEDataset/). This dataset was used in the [PilotWiMAE paper](https://arxiv.org/abs/2605.22856).
+
 ## Generating channels from a config
 
 After you define a YAML config (see examples under `config/` and `docs/main.pdf`), run:
