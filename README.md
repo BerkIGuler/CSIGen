@@ -19,7 +19,7 @@ Run from the repository root (or ensure Python can resolve the `src` package as 
 | Component | Version (reference) |
 |-----------|---------------------|
 | **Python** | **3.12.x** |
-| **Sionna** | **1.2.1**  |
+| **Sionna RT** | **2.2.0** |
 
 Install dependencies into your environment:
 
@@ -27,7 +27,9 @@ Install dependencies into your environment:
 pip install -r requirements.txt
 ```
 
-`requirements.txt` pins packages as resolved in our system. Other platforms or CUDA stacks may need adjusted TensorFlow/Mitsuba wheels. Follow [Sionna](https://github.com/NVlabs/sionna) install guidance if `pip install` fails.
+`requirements.txt` pins packages as resolved in our system. CSIGen uses only Sionna RT (`sionna-rt`), not the full Sionna package or TensorFlow. Follow [Sionna](https://github.com/NVlabs/sionna) install guidance if `pip install` fails.
+
+We tested Sionna RT 2.2.0 on the GPU with NVIDIA driver 580, and it works.
 
 ### GPU acceleration
 
