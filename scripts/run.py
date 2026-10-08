@@ -20,6 +20,7 @@ import yaml
 from datetime import datetime
 import logging
 
+from src import __version__
 from src.channel_generator import generate_channels
 from src.channel import save_channel_data
 from src.config_validator import load_validated_config
@@ -107,6 +108,7 @@ def main():
     metadata_path = output_dir / "metadata.yaml"
     with open(metadata_path, 'w') as f:
         yaml_metadata = {
+            'csigen_version': __version__,
             'scene_name': scene_name,
             'run_timestamp': timestamp,
             'num_txs': int(num_txs) if num_txs is not None else 0,

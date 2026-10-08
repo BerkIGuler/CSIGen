@@ -188,10 +188,12 @@ def add_base_station(
         # Calculate final orientation from mechanical_tilt and azimuth_offset
         final_azimuth = sector_angle + azimuth_offset
         
-        # Convert to radians and create mi.Point3f: [roll, pitch, yaw]
+        # Sionna orientation [alpha, beta, gamma] in radians: alpha rotates about z
+        # (azimuth), beta about y and gamma about x. A positive beta tilts the
+        # boresight below the horizon, so the downtilt is passed with a positive sign.
         sector_orientation = mi.Point3f(
             [float(np.radians(final_azimuth)),
-            float(np.radians(-mechanical_tilt)),
+            float(np.radians(mechanical_tilt)),
             0]
         )
         

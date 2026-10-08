@@ -61,7 +61,7 @@ This project is released **publicly** to help accelerate **wireless AI research*
 │                     #   (eval/ and pretrain/ city configs)
 ├── scenes/           # Example scenes: <city>_1/scene.xml (+ meshes referenced there)
 ├── scripts/          # run.py, compile_docs.sh, and other CLI helpers
-├── docs/             # main.tex and build script for the PDF manual (main.pdf)
+├── docs/             # main.tex and build script for the PDF manual (main.pdf); changelog.md
 ├── examples/         # Notebooks (paths assume repo root on sys.path like scripts/run.py)
 │   ├── CSIGen/       # Notebooks that call run.py and visualize saved output
 │   └── sionna/       # Smaller Sionna RT scene previews (empty / tutorial-style)
