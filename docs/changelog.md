@@ -2,6 +2,13 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-10-08
+
+### Changed
+
+- **Sionna RT 2.2.0.** CSIGen now runs on Sionna RT 2.2.0 (Mitsuba 3.9.1, Dr.Jit 1.5.0) instead of 1.2.1. The code needed no changes; `requirements.txt` now lists only Sionna RT and the packages CSIGen imports, and drops TensorFlow and the full Sionna package.
+- **NVIDIA driver.** We tested Sionna RT 2.2.0 on the GPU with NVIDIA driver 580, and it works.
+
 ## [0.1.1] - 2026-10-08
 
 ### Fixed
