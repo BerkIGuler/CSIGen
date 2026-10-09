@@ -2,6 +2,21 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-10-09
+
+### Added
+
+- **Path buffer check.** Sionna RT keeps at most `path_solver_max_num_paths_per_src` candidate paths per source in one solve and discards the rest without a warning, which removes mostly NLoS paths. CSIGen now measures how full this buffer gets in each solve, logs a warning when it is full, and saves the largest fill of each TX as `path_buffer_fill` in the per-TX metadata (a fraction of the cap; at 1.0, paths were discarded). If it happens, lower `path_solver_rx_batch_size` or raise `path_solver_max_num_paths_per_src`.
+
+### Changed
+
+- **Path solver API.** `solve_paths_per_tx` is replaced by `iter_paths_per_tx`, which solves each TX's receivers in batches (`rx_batch_size`, default 50) and yields one batch at a time, so it loses no more paths than `generate_channels`. The old function solved all receivers of a TX at once, which loses paths, and kept every `Paths` object; each holds about 2 GB of GPU memory with 10^7 paths per source. `iter_paths_for_receivers` does the same for one TX, and the statistics helpers accept lists of batches.
+
+### Fixed
+
+- **Silent index overflow.** Sionna RT indexes its specular-chain table and path buffer with 32-bit integers, so `max(path_solver_spec_table_size, path_solver_max_num_paths_per_src)` times the number of sources must stay below 2^32. There is one source per TX antenna without a synthetic array, so, for example, the 4e8 table with a 32-antenna array would overflow and discard paths silently. The config validator now rejects such settings.
+- **Table size between runs.** `path_solver_spec_table_size` changes a setting of Sionna RT that is shared by the whole process. A run without the option now restores Sionna's default instead of keeping the size of an earlier run.
+
 ## [0.3.0] - 2026-10-09
 
 ### Fixed

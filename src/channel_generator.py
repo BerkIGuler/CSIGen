@@ -17,7 +17,7 @@ from src.user_equipment import set_rx_antenna_array
 from src.radio_map import solve_radio_map, sample_user_positions, filter_positions_by_edge_distance
 from src.receivers import add_receivers_from_samples, rx_names_for_tx
 from src.path_solver import (
-    solve_paths_for_receivers,
+    iter_paths_for_receivers,
     set_specular_chain_table_size,
     get_valid_rx_mask,
     get_rx_los_nlos_mask,
@@ -236,8 +236,7 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
 
     per_tx_users_only = config['path_solver_per_tx_users_only']
     rx_batch_size = config.get('path_solver_rx_batch_size')
-    if config.get('path_solver_spec_table_size') is not None:
-        set_specular_chain_table_size(config['path_solver_spec_table_size'])
+    set_specular_chain_table_size(config.get('path_solver_spec_table_size'))
     all_rx_names = [f"UE_{i}" for i in range(total_users)]
     # Serving (sampling) TX of each user UE_k, as numbered by add_receivers_from_samples
     rx_serving_tx_all = np.repeat(np.arange(num_txs_actual), users_per_tx)
@@ -252,31 +251,30 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             tx_rx_names = rx_names_for_tx(users_per_tx, tx_idx)
         else:
             tx_rx_names = all_rx_names
-        step = rx_batch_size or max(len(tx_rx_names), 1)
-        rx_batches = [tx_rx_names[i:i + step] for i in range(0, len(tx_rx_names), step)]
-        if len(rx_batches) > 1 and config['cfr_out_type'] != 'numpy':
+        if rx_batch_size and len(tx_rx_names) > rx_batch_size and config['cfr_out_type'] != 'numpy':
             raise ValueError("path_solver_rx_batch_size requires cfr_out_type 'numpy'.")
 
         h_parts, rx_names, los_parts = [], [], []
         num_total = 0
-        for batch in rx_batches:
-            paths_tx, row_rx_names = solve_paths_for_receivers(
-                scene,
-                tx_name=tx_name,
-                rx_names=batch,
-                max_depth=config['path_solver_max_depth'],
-                max_num_paths_per_src=config['path_solver_max_num_paths_per_src'],
-                samples_per_src=config['path_solver_samples_per_src'],
-                synthetic_array=config['path_solver_synthetic_array'],
-                los=config['path_solver_los_mode'],
-                specular_reflection=config['path_solver_specular_reflection'],
-                diffuse_reflection=config['path_solver_diffuse_reflection'],
-                refraction=config['path_solver_refraction'],
-                diffraction=config['path_solver_diffraction'],
-                edge_diffraction=config['path_solver_edge_diffraction'],
-                diffraction_lit_region=config['path_solver_diffraction_lit_region'],
-                seed=config['path_solver_seed'],
-            )
+        buffer_fill = 0.0
+        for paths_tx, row_rx_names, batch_fill in iter_paths_for_receivers(
+            scene,
+            tx_name=tx_name,
+            rx_names=tx_rx_names,
+            rx_batch_size=rx_batch_size,
+            max_depth=config['path_solver_max_depth'],
+            max_num_paths_per_src=config['path_solver_max_num_paths_per_src'],
+            samples_per_src=config['path_solver_samples_per_src'],
+            synthetic_array=config['path_solver_synthetic_array'],
+            los=config['path_solver_los_mode'],
+            specular_reflection=config['path_solver_specular_reflection'],
+            diffuse_reflection=config['path_solver_diffuse_reflection'],
+            refraction=config['path_solver_refraction'],
+            diffraction=config['path_solver_diffraction'],
+            edge_diffraction=config['path_solver_edge_diffraction'],
+            diffraction_lit_region=config['path_solver_diffraction_lit_region'],
+            seed=config['path_solver_seed'],
+        ):
             h_batch = compute_cfr_for_paths(
                 paths_tx=paths_tx,
                 num_subcarriers=config['num_subcarriers'],
@@ -295,6 +293,7 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             rx_names.extend(name for name, ok in zip(row_rx_names, valid_mask) if ok)
             los_parts.append((rx_state_mask[valid_mask] == 1).astype(np.int32))
             num_total += len(valid_mask)
+            buffer_fill = max(buffer_fill, batch_fill)
 
         if not h_parts:
             # No receivers for this TX (e.g. a sector without valid radio-map cells)
@@ -351,6 +350,10 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             'total_users': total_users,
             'num_sectors': num_sectors,
             'num_valid_channels': num_valid,
+            # Largest fill of Sionna's per-source path buffer over the solves
+            # of this TX, as a fraction of max_num_paths_per_src; at 1.0 or
+            # above, paths were discarded
+            'path_buffer_fill': float(buffer_fill),
             'cfr_shape': h_tx.shape,
             'cfr_dtype': str(h_tx.dtype),
             'cfr_axes': CFR_AXES,
