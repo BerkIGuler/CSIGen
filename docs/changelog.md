@@ -2,6 +2,12 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-10-08
+
+### Added
+
+- **Array layout in the metadata.** The metadata records the CFR axes and, for each array, its layout and antenna index order.
+
 ## [0.2.1] - 2026-10-08
 
 ### Added

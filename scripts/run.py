@@ -73,6 +73,7 @@ def main():
     num_users_per_tx = None
     total_users = None
     num_sectors = None
+    array_info = {}
     cfr_shapes = []
     cfr_dtypes = []
 
@@ -87,6 +88,7 @@ def main():
             num_users_per_tx = int(tx_metadata['num_users_per_tx'])
             total_users = int(tx_metadata['total_users'])
             num_sectors = int(tx_metadata['num_sectors'])
+            array_info = {key: tx_metadata[key] for key in ('cfr_axes', 'tx_array', 'rx_array')}
 
         cfr_shapes.append(list(h_tx.shape))
         cfr_dtypes.append(str(h_tx.dtype))
@@ -117,6 +119,7 @@ def main():
             'num_sectors': int(num_sectors) if num_sectors is not None else 0,
             'cfr_per_tx_shapes': cfr_shapes,
             'cfr_per_tx_dtypes': cfr_dtypes,
+            **array_info,
             'config': validated_config,
         }
         yaml.dump(yaml_metadata, f, default_flow_style=False)

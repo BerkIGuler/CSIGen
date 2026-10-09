@@ -26,6 +26,32 @@ from src.channel import compute_cfr_for_paths
 
 logger = logging.getLogger(__name__)
 
+# Axes of the saved CFR tensor h (Sionna's Paths.cfr order)
+CFR_AXES = ['rx', 'rx_ant', 'tx', 'tx_ant', 'ofdm_symbol', 'subcarrier']
+
+# Antenna index of Sionna's PlanarArray: r is the row (0 = top), c the column
+# along the array's local y axis and p the polarization, so the vertical index
+# runs fastest.
+ANTENNA_INDEX = 'p * num_rows * num_cols + c * num_rows + r'
+
+
+def array_layout(config: Dict[str, Any], prefix: str, num_ant: int) -> Dict[str, Any]:
+    """Describe the antenna array ``prefix`` ('tx' or 'rx') and its antenna index order."""
+    num_rows = int(config[f'{prefix}_num_rows'])
+    num_cols = int(config[f'{prefix}_num_cols'])
+    return {
+        'num_rows': num_rows,
+        'num_cols': num_cols,
+        'num_polarizations': int(num_ant) // (num_rows * num_cols),
+        'num_ant': int(num_ant),
+        'vertical_spacing': float(config[f'{prefix}_vertical_spacing']),
+        'horizontal_spacing': float(config[f'{prefix}_horizontal_spacing']),
+        'pattern': config[f'{prefix}_pattern'],
+        'polarization': config[f'{prefix}_polarization'],
+        'antenna_index': ANTENNA_INDEX,
+    }
+
+
 def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
     """
     Main function to generate channels from config.
@@ -315,6 +341,9 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             'num_valid_channels': num_valid,
             'cfr_shape': h_tx.shape,
             'cfr_dtype': str(h_tx.dtype),
+            'cfr_axes': CFR_AXES,
+            'tx_array': array_layout(config, 'tx', scene.tx_array.num_ant),
+            'rx_array': array_layout(config, 'rx', scene.rx_array.num_ant),
             'config': config,
         }
 
