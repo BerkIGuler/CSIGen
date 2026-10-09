@@ -59,7 +59,7 @@ This project is released **publicly** to help accelerate **wireless AI research*
 
 ```
 ├── src/              # Library: scene setup, radio map / path solvers, CFR, config validation
-├── config/           # YAML templates; dataset presets under pilotwimae_dataset_configs/
+├── config/           # YAML configs; examples under examples/
 │                     #   (eval/ and pretrain/ city configs)
 ├── scenes/           # Example scenes: <city>_1/scene.xml (+ meshes referenced there)
 ├── scripts/          # run.py, compile_docs.sh, and other CLI helpers
