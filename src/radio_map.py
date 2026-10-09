@@ -3,7 +3,7 @@ Radio map solving and user position sampling utilities.
 """
 
 from sionna.rt import RadioMapSolver
-from typing import Tuple, Optional
+from typing import List, Tuple, Optional
 import numpy as np
 import mitsuba as mi
 import logging
@@ -158,20 +158,28 @@ def sample_user_positions(
     tx_association: bool = True,
     center_pos: bool = True,
     seed: int = 1
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """
-    Sample user positions from radio map.
-    
+    Sample user positions from radio map, in distinct cells.
+
+    A cell is valid for a TX if its metric lies in [min_val_db, max_val_db],
+    its center lies within [min_dist, max_dist] of the TX and, with
+    ``tx_association``, the TX has the highest metric in the cell (the same
+    rules as Sionna's ``RadioMap.sample_cells``). Unlike Sionna, which draws
+    cells with replacement, each TX gets ``min(num_pos_per_tx, number of valid
+    cells)`` distinct cells, so no two users of a TX share a cell. A TX with
+    no valid cell gets no users.
+
     Parameters
     ----------
     radio_map : RadioMap
         RadioMap object from solve_radio_map()
     num_pos_per_tx : int
-        Number of user samples to generate per TX
+        Maximum number of users sampled per TX
     metric : str, default="path_gain"
         Metric for the user sampling from ["path_gain", "rss", "sinr"].
     min_val_db : float, default=-150
-        Minimum value in dB for the user sampling
+        Minimum value in dB (dBm for "rss") for the user sampling
     max_val_db : float, optional
         Maximum value in dB for the user sampling. If None, no upper bound is applied.
     min_dist : float, default=0.0
@@ -179,162 +187,132 @@ def sample_user_positions(
     max_dist : float, optional
         Maximum distance in meters from TX for the user sampling. If None, no upper bound is applied.
     tx_association : bool, default=True
-        Whether to use TX association for the user sampling
+        Only sample cells in which the TX has the highest metric
     center_pos : bool, default=True
-        Whether to sample from the radio map cell center. If False, the user is sampled at a random position within the cell.
+        Place users at the cell centers. If False, users are placed uniformly at random
+        within their cell (a triangle of the measurement surface).
     seed : int, default=1
         Seed for the user sampling
-    
+
     Returns
     -------
     tuple
-        (positions, cell_ids)
-        - positions: Tensor with shape [num_tx, num_users_per_tx, 3]
-        - cell_ids: Tensor with shape [num_tx, num_users_per_tx]
+        (positions, cell_ids): lists with one entry per TX, of shapes
+        [num_users_tx, 3] and [num_users_tx]; num_users_tx can differ between TXs.
     """
-    sample_kwargs = {
-        "num_pos": num_pos_per_tx,
-        "metric": metric,
-        "min_val_db": min_val_db,
-        "tx_association": tx_association,
-        "center_pos": center_pos,
-        "seed": seed,
-    }
-    if max_val_db is not None:
-        sample_kwargs["max_val_db"] = max_val_db
-    if min_dist is not None:
-        sample_kwargs["min_dist"] = min_dist
-    if max_dist is not None:
-        sample_kwargs["max_dist"] = max_dist
-    sampled_positions = radio_map.sample_positions(**sample_kwargs)
-    return sampled_positions[0], sampled_positions[1]  # positions, cell_ids
+    if metric not in ("path_gain", "rss", "sinr"):
+        raise ValueError(f"Invalid metric: {metric}")
+    num_tx = radio_map.num_tx
+    values = np.array(getattr(radio_map, metric)).reshape(num_tx, -1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        if metric == "rss":
+            values_db = 10.0 * np.log10(values) + 30.0  # W to dBm
+        else:
+            values_db = 10.0 * np.log10(values)
+    hi = np.inf if max_val_db is None else max_val_db
+    # NaN and -inf values fail these comparisons and are never valid
+    valid = (values_db >= min_val_db) & (values_db <= hi)
+
+    cc = radio_map.cell_centers  # mi.Point3f; np.array() of it is [3, num_cells]
+    centers = np.stack([np.array(cc.x), np.array(cc.y), np.array(cc.z)], axis=1)
+    # Transmitter positions as stored by Sionna (internal attribute of RadioMap)
+    tp = radio_map._tx_positions
+    tx_pos = np.stack([np.array(tp.x), np.array(tp.y), np.array(tp.z)], axis=1)
+    dist = np.linalg.norm(centers[None, :, :] - tx_pos[:, None, :], axis=2)
+    valid &= (dist >= (min_dist or 0.0)) & (dist <= (np.inf if max_dist is None else max_dist))
+    if tx_association:
+        best = np.array(radio_map.tx_association(metric)).reshape(-1)
+        valid &= best[None, :] == np.arange(num_tx)[:, None]
+
+    if not center_pos:
+        mesh = radio_map.measurement_surface
+        faces = np.array(mesh.faces_buffer()).reshape(-1, 3)
+        vertices = np.array(mesh.vertex_positions_buffer()).reshape(-1, 3)
+
+    rng = np.random.default_rng(seed)
+    pos_rng = np.random.default_rng([seed, 1])  # positions within cells
+    positions, cell_ids = [], []
+    for tx in range(num_tx):
+        # Each cell gets a random key that depends only on the seed, and the TX
+        # takes its valid cells with the lowest keys. A cell that changes
+        # validity (the radio map is not bit-identical between GPU runs)
+        # changes at most one user instead of the whole draw.
+        keys = rng.random(valid.shape[1])
+        # Position of the user within each cell, also fixed per cell
+        offsets = pos_rng.random((valid.shape[1], 2)) if not center_pos else None
+        candidates = np.flatnonzero(valid[tx])
+        n = min(num_pos_per_tx, len(candidates))
+        cells = candidates[np.argsort(keys[candidates], kind="stable")[:n]]
+        if center_pos:
+            pos = centers[cells]
+        else:
+            v0, v1, v2 = (vertices[faces[cells, k]] for k in range(3))
+            r = offsets[cells]
+            a = np.sqrt(r[:, :1])
+            pos = (1 - a) * v0 + a * (1 - r[:, 1:]) * v1 + a * r[:, 1:] * v2
+        positions.append(pos.astype(np.float32))
+        cell_ids.append(cells)
+        if n < num_pos_per_tx:
+            logger.info("TX %s: %s valid cells, sampled %s of %s users", tx, len(candidates), n, num_pos_per_tx)
+
+    counts = [len(c) for c in cell_ids]
+    if sum(counts) == 0:
+        logger.warning("No valid cell for any TX, no users sampled")
+    else:
+        logger.info("Sampled %s users in distinct cells (per TX: min %s, max %s)", sum(counts), min(counts), max(counts))
+    return positions, cell_ids
 
 
 def filter_positions_by_edge_distance(
-    sampled_positions: Tuple[np.ndarray, np.ndarray],
+    sampled_positions: Tuple[List[np.ndarray], List[np.ndarray]],
     edge_epsilon: float
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """
-    Filter sampled positions to remove users within a specified distance from measurement surface edges.
-    
-    This function computes the actual bounds of the measurement surface from the sampled positions
-    and filters out positions that are too close to the edges. This is useful for avoiding edge
-    effects in channel simulations.
-    
+    Remove users within ``edge_epsilon`` meters of the edges of the sampled area.
+
+    A heuristic: users at the far edges of the (clipped) measurement surface
+    tend to be LoS-dominated and are removed. The bounds are taken from the
+    sampled positions of all TXs. Each TX keeps its own remaining users, so
+    the number of users per TX can differ.
+
     Parameters
     ----------
     sampled_positions : tuple
-        Tuple of (positions, cell_ids) where:
-        - positions: Tensor/array with shape [num_tx, num_users_per_tx, 3]
-        - cell_ids: Tensor/array with shape [num_tx, num_users_per_tx]
+        (positions, cell_ids) from sample_user_positions(): lists with one
+        entry per TX, of shapes [num_users_tx, 3] and [num_users_tx]
     edge_epsilon : float
-        Minimum distance in meters from measurement surface edges to keep users.
-        Users within this distance from any edge will be filtered out.
-        If 0.0 or negative, no filtering is performed.
-    
+        Minimum distance in meters from the edges. If 0.0 or negative, no
+        filtering is performed.
+
     Returns
     -------
     tuple
-        (filtered_positions, filtered_cell_ids) with shape [num_tx, min_users_per_tx, 3] and
-        [num_tx, min_users_per_tx] respectively. All TXs will have the same number of users
-        (the minimum across all TXs after filtering).
-    
-    Notes
-    -----
-    - The bounds are computed from the actual sampled positions, which represent the
-      measurement surface bounds more accurately than scene bounds (when
-      the measurement surface is clipped to building bounds).
-    - After filtering, all TXs are truncated to have the same number of users to maintain
-      consistent array shapes. This uses the minimum number of users across all TXs.
+        (positions, cell_ids) in the same format, restricted to the kept users.
     """
     if edge_epsilon <= 0.0:
         logger.info(f"edge_epsilon is {edge_epsilon}, skipping edge filtering")
         return sampled_positions
-    
-    # Convert to numpy for filtering
-    positions_np = sampled_positions[0]
-    cell_ids_np = sampled_positions[1]
-    
-    # Handle tensorflow tensors
-    if hasattr(positions_np, 'numpy'):
-        positions_np = positions_np.numpy()
-    if hasattr(cell_ids_np, 'numpy'):
-        cell_ids_np = cell_ids_np.numpy()
-    
-    num_txs, num_users_per_tx, _ = positions_np.shape
-    
-    # Compute actual bounds from sampled positions (measurement surface bounds)
-    # This is more accurate than scene bounds since the radio map may be computed
-    # on a clipped measurement surface
-    all_x_coords = positions_np[:, :, 0].flatten()
-    all_y_coords = positions_np[:, :, 1].flatten()
-    x_min = float(np.min(all_x_coords))
-    x_max = float(np.max(all_x_coords))
-    y_min = float(np.min(all_y_coords))
-    y_max = float(np.max(all_y_coords))
-    
-    logger.info(f"Measurement surface bounds: x=[{x_min:.1f}, {x_max:.1f}], y=[{y_min:.1f}, {y_max:.1f}]")
-    logger.info(f"Filtering users within {edge_epsilon:.1f} m of measurement surface edges...")
-    
-    # Filter positions for each TX
-    filtered_positions = []
-    filtered_cell_ids = []
-    
-    total_before = 0
-    total_after = 0
-    
-    for tx_idx in range(num_txs):
-        # Get positions for this TX
-        tx_positions = positions_np[tx_idx]  # [num_users_per_tx, 3]
-        tx_cell_ids = cell_ids_np[tx_idx]    # [num_users_per_tx]
-        
-        # Check distance from edges for each user
-        x_coords = tx_positions[:, 0]
-        y_coords = tx_positions[:, 1]
-        
-        # Keep users that are at least epsilon away from all edges
-        keep_mask = (
-            (x_coords >= x_min + edge_epsilon) & 
-            (x_coords <= x_max - edge_epsilon) &
-            (y_coords >= y_min + edge_epsilon) & 
-            (y_coords <= y_max - edge_epsilon)
+
+    positions, cell_ids = sampled_positions
+    if not any(len(p) for p in positions):
+        logger.warning("No sampled users, skipping edge filtering")
+        return sampled_positions
+    all_pos = np.concatenate([p for p in positions if len(p)], axis=0)
+    x_min, y_min = all_pos[:, 0].min(), all_pos[:, 1].min()
+    x_max, y_max = all_pos[:, 0].max(), all_pos[:, 1].max()
+    logger.info(f"Sampled area bounds: x=[{x_min:.1f}, {x_max:.1f}], y=[{y_min:.1f}, {y_max:.1f}]")
+
+    kept_positions, kept_cell_ids = [], []
+    for tx_idx, (pos, cells) in enumerate(zip(positions, cell_ids)):
+        keep = (
+            (pos[:, 0] >= x_min + edge_epsilon) & (pos[:, 0] <= x_max - edge_epsilon) &
+            (pos[:, 1] >= y_min + edge_epsilon) & (pos[:, 1] <= y_max - edge_epsilon)
         )
-        
-        # Filter positions and cell_ids
-        filtered_tx_positions = tx_positions[keep_mask]
-        filtered_tx_cell_ids = tx_cell_ids[keep_mask]
-        
-        filtered_positions.append(filtered_tx_positions)
-        filtered_cell_ids.append(filtered_tx_cell_ids)
-        
-        num_kept = np.sum(keep_mask)
-        num_removed = len(keep_mask) - num_kept
-        total_before += len(keep_mask)
-        total_after += num_kept
-        
-        logger.info(f"  TX {tx_idx}: kept {num_kept}/{len(keep_mask)} users (removed {num_removed})")
-    
-    # Find the minimum number of users per TX to maintain consistent shape
-    min_users_per_tx = min(len(fp) for fp in filtered_positions)
-    
-    if min_users_per_tx == 0:
-        logger.warning("All users were filtered out for at least one TX!")
-        logger.warning("Consider reducing edge_epsilon or increasing num_user_samples_per_tx")
-        # Return empty arrays with correct shape
-        filtered_positions_array = np.empty((num_txs, 0, 3))
-        filtered_cell_ids_array = np.empty((num_txs, 0), dtype=cell_ids_np.dtype)
-        return filtered_positions_array, filtered_cell_ids_array
-    
-    # Truncate all TXs to have the same number of users (use first min_users_per_tx)
-    for tx_idx in range(num_txs):
-        filtered_positions[tx_idx] = filtered_positions[tx_idx][:min_users_per_tx]
-        filtered_cell_ids[tx_idx] = filtered_cell_ids[tx_idx][:min_users_per_tx]
-    
-    # Stack into arrays
-    filtered_positions_array = np.stack(filtered_positions, axis=0)  # [num_tx, min_users_per_tx, 3]
-    filtered_cell_ids_array = np.stack(filtered_cell_ids, axis=0)   # [num_tx, min_users_per_tx]
-    
-    logger.info(f"Filtering complete: {total_before} -> {total_after} users (removed {total_before - total_after})")
-    logger.info(f"Final users per TX: {min_users_per_tx}")
-    
-    return filtered_positions_array, filtered_cell_ids_array
+        kept_positions.append(pos[keep])
+        kept_cell_ids.append(cells[keep])
+        if (~keep).any():
+            logger.info(f"  TX {tx_idx}: kept {int(keep.sum())}/{len(keep)} users")
+
+    before = sum(len(p) for p in positions); after = sum(len(p) for p in kept_positions)
+    logger.info(f"Edge filtering: {before} -> {after} users")
+    return kept_positions, kept_cell_ids

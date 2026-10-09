@@ -15,7 +15,7 @@ from src.scene_setup import setup_scene
 from src.base_station import set_tx_antenna_array, add_base_station
 from src.user_equipment import set_rx_antenna_array
 from src.radio_map import solve_radio_map, sample_user_positions, filter_positions_by_edge_distance
-from src.receivers import add_receivers_from_samples
+from src.receivers import add_receivers_from_samples, rx_names_for_tx
 from src.path_solver import (
     solve_paths_for_receivers,
     set_specular_chain_table_size,
@@ -222,7 +222,7 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
     
     # Step 6: Add receivers
     logger.info("Step 6: Adding receivers...")
-    num_txs_actual, num_users_per_tx, total_users = add_receivers_from_samples(
+    num_txs_actual, users_per_tx, total_users = add_receivers_from_samples(
         scene,
         sampled_positions,
         num_sectors=num_sectors,
@@ -239,6 +239,8 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
     if config.get('path_solver_spec_table_size') is not None:
         set_specular_chain_table_size(config['path_solver_spec_table_size'])
     all_rx_names = [f"UE_{i}" for i in range(total_users)]
+    # Serving (sampling) TX of each user UE_k, as numbered by add_receivers_from_samples
+    rx_serving_tx_all = np.repeat(np.arange(num_txs_actual), users_per_tx)
 
     for tx_idx in range(num_txs_actual):
         bs_id = tx_idx // num_sectors
@@ -247,11 +249,10 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
 
         # Receivers for this TX (its own users or all users), solved in batches
         if per_tx_users_only:
-            start_idx = tx_idx * num_users_per_tx
-            tx_rx_names = all_rx_names[start_idx:start_idx + num_users_per_tx]
+            tx_rx_names = rx_names_for_tx(users_per_tx, tx_idx)
         else:
             tx_rx_names = all_rx_names
-        step = rx_batch_size or len(tx_rx_names)
+        step = rx_batch_size or max(len(tx_rx_names), 1)
         rx_batches = [tx_rx_names[i:i + step] for i in range(0, len(tx_rx_names), step)]
         if len(rx_batches) > 1 and config['cfr_out_type'] != 'numpy':
             raise ValueError("path_solver_rx_batch_size requires cfr_out_type 'numpy'.")
@@ -295,6 +296,12 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             los_parts.append((rx_state_mask[valid_mask] == 1).astype(np.int32))
             num_total += len(valid_mask)
 
+        if not h_parts:
+            # No receivers for this TX (e.g. a sector without valid radio-map cells)
+            logger.info("TX %s: no receivers to solve", tx_idx)
+            h_parts = [np.zeros((0, scene.rx_array.num_ant, 1, scene.tx_array.num_ant,
+                                 config['num_ofdm_symbols'], config['num_subcarriers']), dtype=np.complex64)]
+            los_parts = [np.zeros(0, dtype=np.int32)]
         h_tx = h_parts[0] if len(h_parts) == 1 else np.concatenate(h_parts, axis=0)
         # Binary LOS indicator aligned with the CFR user axis
         los_binary = np.concatenate(los_parts)
@@ -325,7 +332,8 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
         for rx_name in rx_names:
             pos = scene.get(rx_name).position
             rx_positions.append(pos.numpy() if hasattr(pos, 'numpy') else np.array(pos))
-        rx_positions = np.stack(rx_positions, axis=0) if rx_positions else np.zeros((0, 3))
+        # Same layout as Sionna's positions, [num_rx, 3, 1]
+        rx_positions = np.stack(rx_positions, axis=0) if rx_positions else np.zeros((0, 3, 1), dtype=np.float32)
 
         # Prepare per-TX metadata (rx_positions/rx_names and h_tx are restricted to valid channels)
         tx_metadata = {
@@ -337,7 +345,9 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             # Per-valid-channel LOS indicator: 1 = LoS, 0 = NLoS
             'los_binary': los_binary,
             'num_txs': num_txs_actual,
-            'num_users_per_tx': num_users_per_tx,
+            'users_per_tx': [int(n) for n in users_per_tx],
+            # Serving (sampling) TX of each user, aligned with the CFR user axis
+            'rx_serving_tx': rx_serving_tx_all[[int(n.split('_')[1]) for n in rx_names]].astype(np.int32),
             'total_users': total_users,
             'num_sectors': num_sectors,
             'num_valid_channels': num_valid,

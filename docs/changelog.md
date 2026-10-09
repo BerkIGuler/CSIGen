@@ -2,6 +2,16 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-09
+
+### Fixed
+
+- **Duplicate and missing users.** Sionna RT samples each TX's users from its valid radio-map cells with replacement, so a TX with few valid cells placed many users at the same cell center, and a TX with no valid cell got NaN positions, which made the edge filter remove every user. Each TX now gets up to `num_user_samples_per_tx` users in distinct cells, so the number of users per TX can differ, and a TX without valid cells gets none. Each cell gets a random key from `user_sample_seed`, and each TX takes its valid cells with the lowest keys. The radio map is not bit-identical between GPU runs, so a few cells near the thresholds can change validity between runs with the same config; with the keys, such a change moves at most one user instead of most of the draw.
+
+### Changed
+
+- **Metadata.** `num_users_per_tx` is replaced by `users_per_tx` (the user count of each TX), and the per-TX metadata adds `rx_serving_tx`, the TX each saved user was sampled for.
+
 ## [0.2.3] - 2026-10-09
 
 ### Fixed

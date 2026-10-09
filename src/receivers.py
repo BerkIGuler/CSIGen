@@ -4,7 +4,7 @@ Receiver creation utilities for adding user equipment to scenes.
 
 from sionna.rt import Receiver
 import numpy as np
-from typing import Tuple
+from typing import List, Tuple
 import logging
 
 from src.user_equipment import generate_ue_parameters
@@ -13,14 +13,26 @@ from src.utils import get_tx_color
 logger = logging.getLogger(__name__)
 
 
+def rx_names_for_tx(users_per_tx: List[int], tx_idx: int) -> List[str]:
+    """
+    Names of the users sampled for TX ``tx_idx``.
+
+    Users are named UE_<k> with k counting TX by TX (see
+    add_receivers_from_samples), so the users of TX t are
+    UE_<sum(users_per_tx[:t])> to UE_<sum(users_per_tx[:t+1]) - 1>.
+    """
+    start = int(sum(users_per_tx[:tx_idx]))
+    return [f"UE_{k}" for k in range(start, start + int(users_per_tx[tx_idx]))]
+
+
 def add_receivers_from_samples(
     scene,
-    sampled_positions: Tuple[np.ndarray, np.ndarray],
+    sampled_positions: Tuple[List[np.ndarray], List[np.ndarray]],
     num_sectors: int,
     mobility_preset: str,
     mobility_presets: dict,
     seed: int = 1
-) -> Tuple[int, int, int]:
+) -> Tuple[int, List[int], int]:
     """
     Add receivers to scene from sampled positions.
     
@@ -29,9 +41,8 @@ def add_receivers_from_samples(
     scene : sionna.rt.Scene
         The Sionna scene object
     sampled_positions : tuple
-        (positions, cell_ids) from sample_user_positions()
-        - positions: Tensor/array with shape [num_tx, num_users_per_tx, 3]
-        - cell_ids: Tensor/array with shape [num_tx, num_users_per_tx]
+        (positions, cell_ids) from sample_user_positions(): lists with one
+        entry per TX, of shapes [num_users_tx, 3] and [num_users_tx]
     num_sectors : int
         Number of sectors per base station
     mobility_preset : str
@@ -44,17 +55,19 @@ def add_receivers_from_samples(
     Returns
     -------
     tuple
-        (num_txs, num_users_per_tx, total_users)
+        (num_txs, users_per_tx, total_users), where users_per_tx lists the
+        number of users of each TX. Users are named UE_<k> with k counting
+        TX by TX; rx_names_for_tx() gives the names of the users of a TX.
     """
     # Extract positions and cell_ids
-    positions_tensor, cell_ids_tensor = sampled_positions
-    
-    # Convert to numpy once for efficient iteration
-    positions = positions_tensor.numpy() if hasattr(positions_tensor, 'numpy') else np.array(positions_tensor)
-    
-    num_txs, num_users_per_tx, _ = positions.shape
-    total_users = num_txs * num_users_per_tx
-    logger.info(f"Total TXs: {num_txs}, Users per TX: {num_users_per_tx}, Total users: {total_users}")
+    positions, _ = sampled_positions
+    num_txs = len(positions)
+    users_per_tx = [len(p) for p in positions]
+    total_users = sum(users_per_tx)
+    if total_users == 0:
+        logger.warning(f"Total TXs: {num_txs}, no users to add")
+    else:
+        logger.info(f"Total TXs: {num_txs}, users per TX: {min(users_per_tx)}-{max(users_per_tx)}, total users: {total_users}")
     
     # Get config from selected preset and generate UE parameters
     if mobility_preset not in mobility_presets:
@@ -82,8 +95,8 @@ def add_receivers_from_samples(
         # Color for this TX's users (for visualization purposes)
         color = get_tx_color(tx_idx, num_txs)
         
-        for user_idx in range(num_users_per_tx):
-            pos = positions[tx_idx, user_idx].tolist()  # [x, y, z]
+        for user_idx in range(users_per_tx[tx_idx]):
+            pos = positions[tx_idx][user_idx].tolist()  # [x, y, z]
             vel = velocities[user_count].tolist()       # [vx, vy, vz]
             
             if orientation_mode == "random":
@@ -110,4 +123,4 @@ def add_receivers_from_samples(
     logger.info(f"  - Preset: {mobility_preset}")
     logger.info(f"  - Orientation: {orientation_mode}, Speed: {preset_config.get('speed_distribution')}")
     
-    return num_txs, num_users_per_tx, total_users
+    return num_txs, users_per_tx, total_users

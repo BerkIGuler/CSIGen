@@ -9,7 +9,7 @@
 
 \title{CSIGen Documentation}
 \author{Berkay Guler}
-\date{Version 0.2.3 \\ Last Updated: October 8th, 2026}
+\date{Version 0.3.0 \\ Last Updated: October 9th, 2026}
 
 
 \begin{document}
@@ -236,7 +236,7 @@ These control ray-scene interactions for both the radio map and the path solver.
 
 \subsubsection{User Sampling Parameters}
 \begin{itemize}
-  \item \texttt{num\_user\_samples\_per\_tx}: Users sampled per TX array.
+  \item \texttt{num\_user\_samples\_per\_tx}: Maximum number of users sampled per TX array. Each user of a TX is placed in a different radio-map cell, so a TX with fewer valid cells gets fewer users, and a TX with no valid cell gets none. Each cell gets a random key from \texttt{user\_sample\_seed}, and a TX takes its valid cells with the lowest keys. The radio map is not bit-identical between GPU runs, so a few cells near the thresholds can change validity, and this way such a change moves at most one user.
   \item \texttt{user\_sample\_seed}: Random seed for reproducibility.
   \item \texttt{user\_sample\_min/max\_val\_db}: Coverage thresholds (dB).
   \item \texttt{user\_sample\_min/max\_dist}: Distance constraints (meters).
@@ -292,7 +292,7 @@ The generation pipeline transforms a configuration file into channel frequency r
   \item \textbf{Receiver Creation}: Create receivers with mobility parameters.
   \item \textbf{Path Solving}: Compute ray-traced paths per TX.
   \item \textbf{CFR Computation}: Convert paths to frequency response arrays (one tensor per TX over all receivers considered for that TX).
-  \item \textbf{Valid-Path Filtering and LoS/NLOS Labels}: After CFR is built, path delays and Sionna interaction types are evaluated in a single pass (\texttt{\_compute\_rx\_valid\_and\_los\_masks}). Receivers without any path with strictly positive delay ($\tau > 0$) are invalid and dropped. For each remaining (valid) channel, a binary line-of-sight flag is set: \texttt{1} if at least one valid path is pure LoS (all ray--scene interactions along that path are \texttt{InteractionType.NONE}), and \texttt{0} if all valid paths involve at least one non-trivial interaction (NLoS). The saved CFR tensor, \texttt{rx\_positions}, and \texttt{rx\_names} are sliced to valid channels only. Per-TX metadata includes the transmit antenna position (\texttt{tx\_position}), receive positions for valid channels (\texttt{rx\_positions}), corresponding receiver names (\texttt{rx\_names}), \texttt{num\_valid\_channels}, and \texttt{los\_binary} (length equal to the number of valid channels, aligned with the CFR user axis). It also records \texttt{cfr\_axes}, the axes of the CFR tensor (\texttt{rx}, \texttt{rx\_ant}, \texttt{tx}, \texttt{tx\_ant}, \texttt{ofdm\_symbol}, \texttt{subcarrier}), and \texttt{tx\_array} and \texttt{rx\_array}, the layout of each array: rows, columns, polarizations, spacing, pattern and the antenna index order \texttt{p * num\_rows * num\_cols + c * num\_rows + r}, where \texttt{r} is the row counted from the top, \texttt{c} the column along the array's local $y$ axis and \texttt{p} the polarization. The vertical index therefore runs fastest.
+  \item \textbf{Valid-Path Filtering and LoS/NLOS Labels}: After CFR is built, path delays and Sionna interaction types are evaluated in a single pass (\texttt{\_compute\_rx\_valid\_and\_los\_masks}). Receivers without any path with strictly positive delay ($\tau > 0$) are invalid and dropped. For each remaining (valid) channel, a binary line-of-sight flag is set: \texttt{1} if at least one valid path is pure LoS (all ray--scene interactions along that path are \texttt{InteractionType.NONE}), and \texttt{0} if all valid paths involve at least one non-trivial interaction (NLoS). The saved CFR tensor, \texttt{rx\_positions}, and \texttt{rx\_names} are sliced to valid channels only. Per-TX metadata includes the transmit antenna position (\texttt{tx\_position}), receive positions for valid channels (\texttt{rx\_positions}), corresponding receiver names (\texttt{rx\_names}), \texttt{num\_valid\_channels}, \texttt{users\_per\_tx} (the number of users sampled for each TX), \texttt{rx\_serving\_tx} (the TX each saved user was sampled for, aligned with the CFR user axis), and \texttt{los\_binary} (length equal to the number of valid channels, aligned with the CFR user axis). It also records \texttt{cfr\_axes}, the axes of the CFR tensor (\texttt{rx}, \texttt{rx\_ant}, \texttt{tx}, \texttt{tx\_ant}, \texttt{ofdm\_symbol}, \texttt{subcarrier}), and \texttt{tx\_array} and \texttt{rx\_array}, the layout of each array: rows, columns, polarizations, spacing, pattern and the antenna index order \texttt{p * num\_rows * num\_cols + c * num\_rows + r}, where \texttt{r} is the row counted from the top, \texttt{c} the column along the array's local $y$ axis and \texttt{p} the polarization. The vertical index therefore runs fastest.
 \end{enumerate}
 
 \subsection{Key Design Choices}
@@ -315,7 +315,7 @@ All parameters are validated before generation, catching errors early with clear
 \subsubsection{Python API and Saved Outputs}
 Channel generation is exposed as \texttt{generate\_channels(config)} in \texttt{src.channel\_generator}: it is a \emph{streaming} iterator that yields one dictionary per transmit sector index, in order, without holding all TX CFR tensors in memory at once. Each yielded item has keys \texttt{tx\_idx}, \texttt{tx\_name}, \texttt{h\_tx} (NumPy CFR for valid channels only), and \texttt{tx\_metadata} (positions, names, LoS flags, counts, embedded \texttt{config} copy, CFR shape/dtype, etc.).
 
-The helper \texttt{save\_channel\_data} (\texttt{src.channel}) writes a compressed \texttt{.npz} per TX containing array \texttt{h}, \texttt{shape}, \texttt{dtype}, and a nested \texttt{metadata} object. The script \texttt{scripts/run.py} loads a config, iterates \texttt{generate\_channels}, saves one file per TX under a timestamped output directory, and writes a run-level \texttt{metadata.yaml} summary (CSIGen version, scene name, timestamp, global user counts, per-TX CFR shapes/dtypes, CFR axes, array layouts, full config).
+The helper \texttt{save\_channel\_data} (\texttt{src.channel}) writes a compressed \texttt{.npz} per TX containing array \texttt{h}, \texttt{shape}, \texttt{dtype}, and a nested \texttt{metadata} object. The script \texttt{scripts/run.py} loads a config, iterates \texttt{generate\_channels}, saves one file per TX under a timestamped output directory, and writes a run-level \texttt{metadata.yaml} summary (CSIGen version, scene name, timestamp, users per TX, per-TX CFR shapes/dtypes, CFR axes, array layouts, full config).
 
 \clearpage
 \section{Sample Flow}
@@ -377,7 +377,7 @@ Receivers are created with mobility parameters from the selected preset. Orienta
 
 \subsection{Edge Filtering}
 
-After user sampling, positions can be filtered to remove users too close to the measurement surface outer edges. This is controlled by the \texttt{scene\_edge\_epsilon} parameter. The effect of this parameter is visualized in Fig.~\ref{fig:edge_user_filter}. Note that edge filtering is applied as a filter-out mechanism after user sampling. Therefore, it may change the number of effective users drastically especially if this parameter has a large value.  
+After user sampling, positions can be filtered to remove users too close to the measurement surface outer edges. This is controlled by the \texttt{scene\_edge\_epsilon} parameter. The effect of this parameter is visualized in Fig.~\ref{fig:edge_user_filter}. Users at the far edges of the clipped measurement surface tend to be LoS-dominated, so this is a heuristic to remove them. Note that edge filtering is applied as a filter-out mechanism after user sampling. Therefore, it may change the number of effective users drastically especially if this parameter has a large value. Each TX keeps its own remaining users, so the number of users per TX can differ.  
 
 
 \begin{figure}[h]
