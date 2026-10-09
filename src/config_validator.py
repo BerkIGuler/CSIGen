@@ -180,6 +180,16 @@ class ChannelConfigModel(BaseModel):
     path_solver_diffraction_lit_region: bool = Field(..., description="Enables diffraction in the lit region")
     path_solver_seed: int = Field(..., description="Seed for reproducibility")
     path_solver_per_tx_users_only: bool = Field(..., description="If true, solve paths only for users associated with each TX")
+    path_solver_rx_batch_size: Optional[int] = Field(
+        None,
+        ge=1,
+        description="If set, solve each TX's receivers in batches of this size",
+    )
+    path_solver_spec_table_size: Optional[int] = Field(
+        None,
+        ge=1,
+        description="If set, minimum size of Sionna RT's specular-chain hash table per source",
+    )
     
     # OFDM parameters
     num_subcarriers: int = Field(..., ge=1, description="Number of subcarriers")

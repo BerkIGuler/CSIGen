@@ -113,6 +113,8 @@ path_solver_edge_diffraction: true  # Diffraction at edges
 path_solver_diffraction_lit_region: false  # Diffraction in LoS regions
 path_solver_seed: 2  # Random seed
 path_solver_per_tx_users_only: false  # Compute paths only for TX-associated users
+path_solver_rx_batch_size: 50  # Solve each TX's receivers in batches of this size (null = all at once)
+path_solver_spec_table_size: 400000000  # Sionna specular-chain hash table size per source (null = Sionna default)
 
 # OFDM parameters
 num_subcarriers: 32  # OFDM subcarrier count

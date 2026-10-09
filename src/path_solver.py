@@ -11,6 +11,24 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def set_specular_chain_table_size(size: int) -> None:
+    """
+    Set the minimum size of Sionna RT's specular-chain hash table per source.
+
+    Sionna's shoot-and-bounce candidate generator stores each new (specular
+    chain, receiver) pair in a hash table of size
+    ``max(max_num_paths_per_src, MIN_SPEC_COUNT_SIZE)`` per source. When many
+    receivers share one solve, the table fills up, new chains collide with
+    stored ones and are discarded silently, so mostly NLoS paths are lost.
+    ``MIN_SPEC_COUNT_SIZE`` is an internal constant of Sionna RT 2.2.0.
+    """
+    from sionna.rt.path_solvers.sb_candidate_generator import SBCandidateGenerator
+    if not hasattr(SBCandidateGenerator, "MIN_SPEC_COUNT_SIZE"):
+        raise RuntimeError("This Sionna RT version has no SBCandidateGenerator.MIN_SPEC_COUNT_SIZE.")
+    SBCandidateGenerator.MIN_SPEC_COUNT_SIZE = int(size)
+    logger.info("Set the specular-chain hash table size to %s per source", int(size))
+
+
 def _compute_rx_valid_and_los_masks(paths: Paths) -> Tuple[np.ndarray, np.ndarray]:
     """
     Internal helper to compute both:
@@ -25,7 +43,9 @@ def _compute_rx_valid_and_los_masks(paths: Paths) -> Tuple[np.ndarray, np.ndarra
     """
     tau = paths.tau.numpy()
     if tau.size == 0:
-        return np.array([], dtype=bool), np.array([], dtype=int)
+        # No paths at all: every RX is invalid (tau keeps the RX axis first)
+        num_rx = tau.shape[0] if tau.ndim > 0 else 0
+        return np.zeros(num_rx, dtype=bool), np.full(num_rx, -1, dtype=int)
 
     tau = np.asarray(tau, dtype=np.float64)
     # Valid paths per ray: same criterion as other helpers (tau > 0)
@@ -98,72 +118,83 @@ def _solve_paths_for_single_tx(
     This contains the core logic previously inside the loop of solve_paths_per_tx.
     It is used by the streaming API to avoid keeping all Paths objects in memory.
     """
-    # PathSolver is computationally expensive, so we solve for each TX separately
-    ps = PathSolver()
-
-    # Get all receivers and TXs from scene
-    all_rx_names = [obj for obj in scene.receivers]
-    all_tx_names = [obj for obj in scene.transmitters]
-
-    # Map tx_idx to TX name
     bs_id = tx_idx // num_sectors
     sector_id = (tx_idx % num_sectors) + 1
     tx_name = f"BS_{bs_id}_sector_{sector_id}"
 
-    # Determine which receivers to use for this TX
     if per_tx_users_only:
-        # Only use receivers that are associated with this TX
+        # Users are named UE_<tx_idx * num_users_per_tx + j> (see add_receivers_from_samples)
         start_idx = tx_idx * num_users_per_tx
-        end_idx = (tx_idx + 1) * num_users_per_tx
-        selected_rx_names = all_rx_names[start_idx:end_idx]
-        logger.info(
-            "TX %s (%s): Solving paths for %s associated users (UE_%s to UE_%s)",
-            tx_idx,
-            tx_name,
-            len(selected_rx_names),
-            start_idx,
-            end_idx - 1,
-        )
+        rx_names = [f"UE_{i}" for i in range(start_idx, start_idx + num_users_per_tx)]
     else:
-        # Use all receivers
-        selected_rx_names = all_rx_names
-        logger.info(
-            "TX %s (%s): Solving paths for all %s users",
-            tx_idx,
-            tx_name,
-            len(selected_rx_names),
-        )
+        rx_names = list(scene.receivers)
 
-    # Temporarily remove other receivers and TXs from scene
-    rx_names_to_remove = [name for name in all_rx_names if name not in selected_rx_names]
-    tx_names_to_remove = [name for name in all_tx_names if name != tx_name]
+    paths_tx, _ = solve_paths_for_receivers(
+        scene,
+        tx_name=tx_name,
+        rx_names=rx_names,
+        max_depth=max_depth,
+        max_num_paths_per_src=max_num_paths_per_src,
+        samples_per_src=samples_per_src,
+        synthetic_array=synthetic_array,
+        los=los,
+        specular_reflection=specular_reflection,
+        diffuse_reflection=diffuse_reflection,
+        refraction=refraction,
+        diffraction=diffraction,
+        edge_diffraction=edge_diffraction,
+        diffraction_lit_region=diffraction_lit_region,
+        seed=seed,
+    )
+    return paths_tx
 
-    # Store removed objects so we can restore them later
-    removed_rxs = []
-    removed_txs = []
 
-    # Remove receivers
-    for rx_name_to_remove in rx_names_to_remove:
-        removed_rxs.append(scene.get(rx_name_to_remove))
-        scene.remove(rx_name_to_remove)
+def solve_paths_for_receivers(
+    scene,
+    tx_name: str,
+    rx_names: List[str],
+    max_depth: int = 5,
+    max_num_paths_per_src: int = 10**6,
+    samples_per_src: int = 10**6,
+    synthetic_array: bool = True,
+    los: bool = True,
+    specular_reflection: bool = True,
+    diffuse_reflection: bool = True,
+    refraction: bool = True,
+    diffraction: bool = True,
+    edge_diffraction: bool = True,
+    diffraction_lit_region: bool = False,
+    seed: int = 1,
+) -> Tuple[Paths, List[str]]:
+    """
+    Solve paths from one transmitter to the named receivers.
 
-    # Remove TXs
-    for tx_name_to_remove in tx_names_to_remove:
-        removed_txs.append(scene.get(tx_name_to_remove))
-        scene.remove(tx_name_to_remove)
+    All other transmitters and receivers are removed from the scene during the
+    solve and added back afterwards. Receivers are selected by name, so the
+    result does not depend on the order of ``scene.receivers``.
+
+    Returns
+    -------
+    tuple
+        (paths, row_rx_names): the Paths object and the receiver names in the
+        order of its receiver axis.
+    """
+    ps = PathSolver()
+    selected = set(rx_names)
+    missing = selected - set(scene.receivers)
+    if missing:
+        raise ValueError(f"Receivers not in scene: {sorted(missing)[:5]}")
+
+    removed_rxs = [scene.get(name) for name in list(scene.receivers) if name not in selected]
+    removed_txs = [scene.get(name) for name in list(scene.transmitters) if name != tx_name]
+    for obj in removed_rxs + removed_txs:
+        scene.remove(obj.name)
 
     try:
-        logger.info(
-            "Solving paths for TX %s (%s) with %s receivers",
-            tx_idx,
-            tx_name,
-            len(selected_rx_names),
-        )
-        logger.info("Scene receivers: %s", len(scene.receivers))
-        logger.info("Scene transmitters: %s", len(scene.transmitters))
-
-        # Solve paths for this TX with selected receivers
-        paths_tx = ps(
+        # The receiver axis of the paths follows the scene's receiver order
+        row_rx_names = list(scene.receivers)
+        logger.info("Solving paths for %s with %s receivers", tx_name, len(row_rx_names))
+        paths = ps(
             scene,
             max_depth=max_depth,
             max_num_paths_per_src=max_num_paths_per_src,
@@ -178,14 +209,10 @@ def _solve_paths_for_single_tx(
             diffraction_lit_region=diffraction_lit_region,
             seed=seed,
         )
-        return paths_tx
-
+        return paths, row_rx_names
     finally:
-        # Restore removed receivers and TXs
-        for rx_obj in removed_rxs:
-            scene.add(rx_obj)
-        for tx_obj in removed_txs:
-            scene.add(tx_obj)
+        for obj in removed_rxs + removed_txs:
+            scene.add(obj)
 
 
 def solve_paths_per_tx(

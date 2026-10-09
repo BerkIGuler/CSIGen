@@ -2,6 +2,16 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.3] - 2026-10-09
+
+### Fixed
+
+- **Paths lost with many receivers.** Sionna RT finds reflected paths by remembering each new chain of reflecting surfaces per receiver in a hash table of fixed size. When many receivers share one path solve, the table fills up and new chains are discarded as duplicates without a warning, so receivers, mostly NLoS ones, lose some paths or all of them. Two new settings control this:
+  - `path_solver_rx_batch_size` solves each TX's receivers in batches of this size, so fewer receivers compete for the table. Smaller batches are more accurate but slower.
+  - `path_solver_spec_table_size` enlarges the table (8 bytes of GPU memory per entry), so larger batches stay accurate.
+
+- **Receivers without paths in a solve.** A solve in which no receiver has a path now marks each receiver as having no path instead of failing.
+
 ## [0.2.2] - 2026-10-08
 
 ### Added
