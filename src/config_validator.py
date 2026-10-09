@@ -223,6 +223,30 @@ class ChannelConfigModel(BaseModel):
         return [float(x) for x in v]
     
     @model_validator(mode='after')
+    def validate_path_table_index(self):
+        """
+        Reject path solver settings whose table indices overflow 32 bits.
+
+        Sionna RT indexes its specular-chain table and its path buffer with
+        32-bit integers of size (entries per source) x (number of sources).
+        Beyond 2^32 the indices wrap around and paths are discarded silently.
+        Each TX is solved alone, so there is one source with a synthetic array
+        and one source per TX antenna without.
+        """
+        num_sources = 1
+        if not self.path_solver_synthetic_array:
+            num_pol = 2 if self.tx_polarization in ("cross", "VH") else 1
+            num_sources = self.tx_num_rows * self.tx_num_cols * num_pol
+        entries = max(self.path_solver_spec_table_size or 10**6, self.path_solver_max_num_paths_per_src)
+        if entries * num_sources >= 2**32:
+            raise ValueError(
+                f"max(path_solver_spec_table_size, path_solver_max_num_paths_per_src) x number of "
+                f"sources = {entries} x {num_sources} exceeds Sionna RT's 32-bit indices (2^32). "
+                "Use path_solver_synthetic_array: true or smaller sizes."
+            )
+        return self
+
+    @model_validator(mode='after')
     def validate_mobility_preset(self):
         """Validate that mobility_preset exists in mobility_presets."""
         if self.mobility_preset not in self.mobility_presets:

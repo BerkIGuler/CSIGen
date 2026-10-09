@@ -26,8 +26,8 @@ def compute_cfr_for_paths(
     Parameters
     ----------
     paths_tx :
-        Paths object for a single TX, typically from solve_paths_per_tx() or the
-        streaming per-TX solver.
+        Paths object for a single TX, typically one batch from
+        iter_paths_for_receivers() or iter_paths_per_tx().
     num_subcarriers : int
         Number of subcarriers
     num_ofdm_symbols : int
