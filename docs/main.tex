@@ -9,7 +9,7 @@
 
 \title{CSIGen Documentation}
 \author{Berkay Guler}
-\date{Version 0.3.1 \\ Last Updated: October 9th, 2026}
+\date{Version 0.3.2 \\ Last Updated: October 9th, 2026}
 
 
 \begin{document}
@@ -264,7 +264,7 @@ Beyond the knobs listed here, path solving also uses \texttt{path\_solver\_max\_
   \item \texttt{path\_solver\_seed}: Random seed.
   \item \texttt{path\_solver\_per\_tx\_users\_only}: Compute paths only for TX-associated users.
   \item \texttt{path\_solver\_rx\_batch\_size} (optional): Solve each TX's receivers (its own users or all users) in batches of this size. Sionna RT stores each new specular chain per receiver in a hash table of fixed size per source. When many receivers share one solve, the table fills up and new chains are discarded silently, so some NLoS paths are lost. Omit or set to \texttt{null} to solve all receivers at once.
-  \item \texttt{path\_solver\_spec\_table\_size} (optional): Minimum size of the specular-chain hash table per source (Sionna RT's internal \texttt{SBCandidateGenerator.MIN\_SPEC\_COUNT\_SIZE}; the table has $\max(\texttt{max\_num\_paths\_per\_src}, \text{this value})$ entries and takes 8 bytes per entry). Omit or set to \texttt{null} to keep the Sionna default. The table and the path buffer are indexed with 32-bit integers, so $\max(\texttt{max\_num\_paths\_per\_src}, \text{this value})$ times the number of sources must stay below $2^{32}$; the number of sources is 1 with a synthetic array and the number of TX antennas without, and the config validator rejects larger settings.
+  \item \texttt{path\_solver\_spec\_table\_size} (optional): Minimum size of the specular-chain hash table per source (Sionna RT's internal \texttt{SBCandidateGenerator.MIN\_SPEC\_COUNT\_SIZE}; the table has $\max(\texttt{max\_num\_paths\_per\_src}, \textrm{this value})$ entries and takes 8 bytes per entry). Omit or set to \texttt{null} to keep the Sionna default. The table and the path buffer are indexed with 32-bit integers, so $\max(\texttt{max\_num\_paths\_per\_src}, \textrm{this value})$ times the number of sources must stay below $2^{32}$; the number of sources is 1 with a synthetic array and the number of TX antennas without, and the config validator rejects larger settings.
 \end{itemize}
 
 \subsubsection{OFDM and CFR Parameters}
@@ -316,6 +316,37 @@ All parameters are validated before generation, catching errors early with clear
 Channel generation is exposed as \texttt{generate\_channels(config)} in \texttt{src.channel\_generator}: it is a \emph{streaming} iterator that yields one dictionary per transmit sector index, in order, without holding all TX CFR tensors in memory at once. Each yielded item has keys \texttt{tx\_idx}, \texttt{tx\_name}, \texttt{h\_tx} (NumPy CFR for valid channels only), and \texttt{tx\_metadata} (positions, names, LoS flags, counts, embedded \texttt{config} copy, CFR shape/dtype, etc.).
 
 The helper \texttt{save\_channel\_data} (\texttt{src.channel}) writes a compressed \texttt{.npz} per TX containing array \texttt{h}, \texttt{shape}, \texttt{dtype}, and a nested \texttt{metadata} object. The script \texttt{scripts/run.py} loads a config, iterates \texttt{generate\_channels}, saves one file per TX under a timestamped output directory, and writes a run-level \texttt{metadata.yaml} summary (CSIGen version, scene name, timestamp, users per TX, per-TX CFR shapes/dtypes, CFR axes, array layouts, full config).
+
+\clearpage
+\section{Train/Test Splits}
+\label{sec:splits}
+
+A run stores one file per TX, and each row of a file is the channel between that TX and one user. In the all-users mode (\texttt{path\_solver\_per\_tx\_users\_only: false}), each user therefore appears in the file of every TX. The script \texttt{scripts/split\_dataset.py} splits a run into a train run and a test run by assigning every channel to train, to test or to neither, so that train and test share no users, no TXs, or neither, depending on the method:
+
+\begin{minted}{bash}
+python scripts/split_dataset.py --run output/<scene_name>/<run_id> \
+    --out <out_dir> --by bs --test-ratio 0.2 --seed 1
+\end{minted}
+
+\subsection{Methods}
+\begin{itemize}
+  \item \texttt{users}: A random \texttt{test\_ratio} of the user positions is test. All channels of a user are on the same side, so train and test share no users, but train users can lie next to test users.
+  \item \texttt{area}: The bounding box of the user positions is tiled with square blocks of \texttt{--block-size} meters (default 50). Blocks are taken in random order and assigned to test until they hold at least \texttt{test\_ratio} of the users, so the test share can exceed the ratio by up to one block (and all blocks but one stay train at most). With \texttt{--guard} $g > 0$, train users within $g$ meters (horizontal distance) of a test user are dropped, so the test users lie in areas without training users.
+  \item \texttt{sector}: A random \texttt{test\_ratio} of the sectors (TXs), or the sectors given with \texttt{--test-ids}, is test. All channels of a sector are on the same side. The users appear on both sides, with different sectors. A test sector usually has train sectors on the same base station, which share its position and see the same paths with another antenna orientation, so test results on a \texttt{sector} split are more optimistic than on a \texttt{bs} split.
+  \item \texttt{bs}: As \texttt{sector}, for base stations with all their sectors. Base station $b$ holds the TXs $b N_s$ to $(b+1) N_s - 1$, where $N_s$ is \texttt{num\_sectors}.
+  \item \texttt{sector+users}, \texttt{sector+area}, \texttt{bs+users}, \texttt{bs+area}: A TX split and a user split, each with \texttt{test\_ratio}. A channel is train if both its TX and its user are train, test if both are test, and is dropped otherwise, so train and test share neither users nor TXs. In the all-users mode, test therefore keeps about $r^2$ of the channels and train about $(1-r)^2$ for \texttt{test\_ratio} $r$; choose a larger ratio for a usable test set.
+\end{itemize}
+With \texttt{--disjoint-users}, a \texttt{sector} or \texttt{bs} split also gives each user the side of the TX it was sampled for (\texttt{rx\_serving\_tx}) and drops the channels between a user and a TX of the other side. For \texttt{users}, \texttt{sector} and \texttt{bs}, the number of test items is the rounded \texttt{test\_ratio} times the number of user positions, sectors or base stations, at least one and at most all but one; sectors and base stations without channels are not drawn. Users at the same position, which runs before CSIGen 0.3.0 can contain, are always kept on the same side: a \texttt{users} split draws positions rather than users, and in the other methods users at the same position that end up on different sides are dropped. All random choices use \texttt{--seed}, so the same command gives the same split.
+
+\subsection{Output}
+The output directory gets \texttt{train/} and \texttt{test/}, each a run in the usual format. Every TX file is written on both sides, restricted to the channels of that side, possibly none. The per-row metadata (\texttt{rx\_names}, \texttt{rx\_positions}, \texttt{los\_binary}, \texttt{rx\_serving\_tx}) is restricted in the same way, \texttt{source\_rows} holds the row index of each kept channel in the source file, and \texttt{split\_side} names the side. Each side also gets a \texttt{split.yaml} with:
+\begin{itemize}
+  \item the method, a description of what it holds out, and all parameters, including the seed;
+  \item the test sectors, base stations or blocks that were chosen (blocks as indices $[i, j]$ of the tiling that starts at \texttt{block\_origin}), the number of users dropped by the guard, and the number of users dropped because they share a position with a user on the other side;
+  \item the source run (directory, scene, timestamp and CSIGen version) and the CSIGen version, git commit (with \texttt{-dirty} for uncommitted changes), command and time of the split;
+  \item the number of channels and users on each side, the number of dropped channels, the number of users on both sides, and the number of channels of each TX on each side.
+\end{itemize}
+The user counts of the source run do not hold for a split run, so \texttt{users\_per\_tx} and \texttt{total\_users} are renamed to \texttt{source\_users\_per\_tx} and \texttt{source\_total\_users}, and \texttt{metadata.yaml} gets \texttt{num\_users}, the number of users of the side. Runs made before CSIGen 0.3.0 have no \texttt{rx\_serving\_tx}; the script derives the serving TX from the user numbering.
 
 \clearpage
 \section{Sample Flow}

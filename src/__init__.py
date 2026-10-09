@@ -2,7 +2,7 @@
 CSIGen - Channel generation package using Sionna RT.
 """
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 from src.channel_generator import generate_channels
 from src.channel import compute_cfr, save_channel_data
