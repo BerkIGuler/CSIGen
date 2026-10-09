@@ -2,6 +2,12 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-10-09
+
+### Added
+
+- **Train/test splits.** `scripts/split_dataset.py` splits a run into a train run and a test run in the usual format, so that the two share no users, no sectors, no base stations, or neither users nor TXs. `--by` selects random users (`users`), square blocks of the scene with an optional guard distance (`area`), sectors (`sector`), base stations (`bs`), or a sector or base-station split combined with a user split (for example `bs+area`), with `--test-ratio` or explicit `--test-ids`, and `--seed`. Each side gets a `split.yaml` that records the method, its parameters, the chosen test items, the source run, the CSIGen version and git commit, and the counts, and each file records the source row of every kept channel in `source_rows`. Users at the same position are never split across the two sides. In a split run, the user counts of the source run are renamed to `source_users_per_tx` and `source_total_users`.
+
 ## [0.3.1] - 2026-10-09
 
 ### Added

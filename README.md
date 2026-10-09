@@ -14,6 +14,14 @@ python scripts/run.py --config path/to/your_config.yaml
 
 Run from the repository root (or ensure Python can resolve the `src` package as in `scripts/run.py`). The script loads the config, streams channel outputs per transmit sector, and writes timestamped artifacts under `output/` (see `docs/main.pdf` for layout and metadata).
 
+## Splitting a run into train and test
+
+```bash
+python scripts/split_dataset.py --run output/<scene_name>/<run_id> --out <out_dir> --by bs --test-ratio 0.2 --seed 1
+```
+
+This writes `<out_dir>/train/` and `<out_dir>/test/`, each a run in the same format, with a `split.yaml` that records the method, its parameters and the counts. `--by` selects random users (`users`), areas of the scene (`area`), sectors (`sector`), base stations (`bs`), or a sector or base-station split combined with a user split (for example `bs+area`). See `docs/main.pdf` for the options.
+
 ## Requirements
 
 | Component | Version (reference) |
@@ -62,7 +70,7 @@ This project is released **publicly** to help accelerate **wireless AI research*
 ├── config/           # YAML configs; examples under examples/
 │                     #   (eval/ and pretrain/ city configs)
 ├── scenes/           # Example scenes: <city>_1/scene.xml (+ meshes referenced there)
-├── scripts/          # run.py, compile_docs.sh, and other CLI helpers
+├── scripts/          # run.py, split_dataset.py, compile_docs.sh, and other CLI helpers
 ├── docs/             # main.tex and build script for the PDF manual (main.pdf); changelog.md
 ├── examples/         # Notebooks (paths assume repo root on sys.path like scripts/run.py)
 │   ├── CSIGen/       # Notebooks that call run.py and visualize saved output
