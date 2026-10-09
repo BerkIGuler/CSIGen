@@ -3,7 +3,7 @@ Scene setup utilities for loading and preparing scenes for channel generation.
 """
 
 from pathlib import Path
-from sionna.rt import load_scene, transform_mesh
+from sionna.rt import ITURadioMaterial, load_scene, transform_mesh
 from typing import Tuple, Optional, Any
 import logging
 
@@ -15,6 +15,8 @@ from src.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+SUPPORTED_GROUND_MATERIALS = ("concrete", "asphalt_concrete")
 
 
 def setup_scene(
@@ -59,7 +61,8 @@ def setup_scene(
     user_shift_from_ground : float, default=1.5
         Up shift in meters of users from the ground plane
     override_ground_material : str or None, default=None
-        Optional override for ground material. Currently supports "concrete".
+        Optional ITU material type for the ground: "concrete" or "asphalt_concrete".
+        The material is created if the scene does not define it.
     merge_shapes : bool, default=False
         Whether to merge building shapes (False recommended for building extraction)
     
@@ -75,33 +78,7 @@ def setup_scene(
     scene = load_scene(scene_xml_path, merge_shapes=merge_shapes)
 
     if override_ground_material is not None:
-        if override_ground_material != "concrete":
-            raise ValueError(
-                f"Unsupported override_ground_material: {override_ground_material}. "
-                "Supported values: None, 'concrete'."
-            )
-        ground_obj = scene.objects.get("ground")
-        if ground_obj is None:
-            logger.warning(
-                "Requested ground material override to concrete, but no 'ground' object exists in scene."
-            )
-        else:
-            concrete_candidates = ["itu_concrete", "mat-itu_concrete"]
-            concrete_name = next((name for name in concrete_candidates if scene.get(name) is not None), None)
-            if concrete_name is None:
-                raise ValueError(
-                    "Ground material override requested ('concrete') but no concrete material "
-                    f"found in scene. Tried: {concrete_candidates}"
-                )
-            ground_obj.radio_material = concrete_name
-            # Sionna updates all registered radio materials on frequency changes.
-            # Remove wet-ground aliases so unsupported wet-ground frequency models
-            # do not fail even after ground reassignment.
-            for wet_name in ("wet_ground", "itu_wet_ground", "mat-itu_wet_ground"):
-                wet_mat = scene.get(wet_name)
-                if wet_mat is not None:
-                    scene.remove(wet_name)
-            logger.info("Overrode ground material to %s", concrete_name)
+        _override_ground_material(scene, override_ground_material)
     
     # Set carrier frequency
     scene.frequency = carrier_frequency
@@ -137,3 +114,42 @@ def setup_scene(
     )
     
     return scene, building_positions, measurement_surface, antenna_information
+
+
+def _override_ground_material(scene, itu_type: str) -> None:
+    """
+    Assign the ITU material ``itu_type`` to the scene's ground object.
+
+    The material is created with the thickness of the current ground material
+    if the scene does not define it. Wet-ground materials are then removed,
+    because Sionna RT evaluates every registered material when the frequency
+    is set, and the ITU ground models are defined for 1-10 GHz only.
+    """
+    if itu_type not in SUPPORTED_GROUND_MATERIALS:
+        raise ValueError(
+            f"Unsupported override_ground_material: {itu_type}. "
+            f"Supported values: None, {', '.join(repr(m) for m in SUPPORTED_GROUND_MATERIALS)}."
+        )
+    ground_obj = scene.objects.get("ground")
+    if ground_obj is None:
+        logger.warning(
+            "Requested ground material override to %s, but no 'ground' object exists in scene.",
+            itu_type,
+        )
+        return
+
+    candidates = [f"itu_{itu_type}", f"mat-itu_{itu_type}"]
+    material_name = next((name for name in candidates if scene.get(name) is not None), None)
+    if material_name is None:
+        material_name = candidates[0]
+        thickness = float(ground_obj.radio_material.thickness[0])
+        scene.add(ITURadioMaterial(material_name, itu_type, thickness=thickness))
+        logger.info("Created ground material %s (thickness %.3f m)", material_name, thickness)
+    
+    # Assign the registered material to the ground mesh.
+    ground_obj.radio_material = material_name
+
+    for wet_name in ("wet_ground", "itu_wet_ground", "mat-itu_wet_ground"):
+        if scene.get(wet_name) is not None:
+            scene.remove(wet_name)
+    logger.info("Overrode ground material to %s", material_name)

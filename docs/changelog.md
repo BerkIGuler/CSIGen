@@ -2,6 +2,16 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-10-08
+
+### Added
+
+- **Asphalt ground.** `override_ground_material` accepts `asphalt_concrete` (ITU-R P.2040-4, 1-40 GHz) as well as `concrete`.
+
+### Changed
+
+- **Ground material of the dataset configs.** The configs in `config/pilotwimae_dataset_configs/` now accept `asphalt_concrete`.
+
 ## [0.2.0] - 2026-10-08
 
 ### Changed
