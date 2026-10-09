@@ -2,13 +2,13 @@
 CSIGen - Channel generation package using Sionna RT.
 """
 
-__version__ = "0.2.3"
+__version__ = "0.3.0"
 
 from src.channel_generator import generate_channels
 from src.channel import compute_cfr, save_channel_data
 from src.scene_setup import setup_scene
 from src.radio_map import solve_radio_map, sample_user_positions
-from src.receivers import add_receivers_from_samples
+from src.receivers import add_receivers_from_samples, rx_names_for_tx
 from src.path_solver import solve_paths_per_tx
 from src.config_validator import validate_config, load_validated_config
 

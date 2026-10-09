@@ -4,9 +4,11 @@ Path solving utilities for efficient per-TX path computation.
 
 from sionna.rt import PathSolver, Paths
 from sionna.rt.constants import InteractionType
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 import logging
 import numpy as np
+
+from src.receivers import rx_names_for_tx
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +99,7 @@ def _solve_paths_for_single_tx(
     tx_idx: int,
     num_txs: int,
     num_sectors: int,
-    num_users_per_tx: int,
+    num_users_per_tx: Union[int, List[int]],
     per_tx_users_only: bool = True,
     max_depth: int = 5,
     max_num_paths_per_src: int = 10**6,
@@ -123,9 +125,8 @@ def _solve_paths_for_single_tx(
     tx_name = f"BS_{bs_id}_sector_{sector_id}"
 
     if per_tx_users_only:
-        # Users are named UE_<tx_idx * num_users_per_tx + j> (see add_receivers_from_samples)
-        start_idx = tx_idx * num_users_per_tx
-        rx_names = [f"UE_{i}" for i in range(start_idx, start_idx + num_users_per_tx)]
+        counts = [num_users_per_tx] * num_txs if isinstance(num_users_per_tx, int) else list(num_users_per_tx)
+        rx_names = rx_names_for_tx(counts, tx_idx)
     else:
         rx_names = list(scene.receivers)
 
@@ -219,7 +220,7 @@ def solve_paths_per_tx(
     scene,
     num_txs: int,
     num_sectors: int,
-    num_users_per_tx: int,
+    num_users_per_tx: Union[int, List[int]],
     per_tx_users_only: bool = True,
     max_depth: int = 5,
     max_num_paths_per_src: int = 10**6,
@@ -248,8 +249,9 @@ def solve_paths_per_tx(
         Total number of transmitters (base stations x sectors per base station)
     num_sectors : int
         Number of sectors per base station (e.g. 1, 3, 6, etc.)
-    num_users_per_tx : int
-        Number of users sampled per TX
+    num_users_per_tx : int or list of int
+        Number of users sampled per TX, or the list of user counts per TX
+        (as returned by add_receivers_from_samples)
     per_tx_users_only : bool, default=True
         If True, solve paths only for users associated with each TX (sampled from the radio map).
         If False, solve for all users (but still per TX, i.e. all users are associated with each TX)

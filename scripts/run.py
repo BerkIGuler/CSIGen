@@ -70,7 +70,7 @@ def main():
 
     # Global summary information to be filled as we stream results
     num_txs = None
-    num_users_per_tx = None
+    users_per_tx = None
     total_users = None
     num_sectors = None
     array_info = {}
@@ -85,7 +85,7 @@ def main():
         # Initialize global summary info from first TX
         if num_txs is None:
             num_txs = int(tx_metadata['num_txs'])
-            num_users_per_tx = int(tx_metadata['num_users_per_tx'])
+            users_per_tx = [int(n) for n in tx_metadata['users_per_tx']]
             total_users = int(tx_metadata['total_users'])
             num_sectors = int(tx_metadata['num_sectors'])
             array_info = {key: tx_metadata[key] for key in ('cfr_axes', 'tx_array', 'rx_array')}
@@ -114,7 +114,7 @@ def main():
             'scene_name': scene_name,
             'run_timestamp': timestamp,
             'num_txs': int(num_txs) if num_txs is not None else 0,
-            'num_users_per_tx': int(num_users_per_tx) if num_users_per_tx is not None else 0,
+            'users_per_tx': users_per_tx or [],
             'total_users': int(total_users) if total_users is not None else 0,
             'num_sectors': int(num_sectors) if num_sectors is not None else 0,
             'cfr_per_tx_shapes': cfr_shapes,

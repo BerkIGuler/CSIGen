@@ -315,6 +315,7 @@ def generate_ue_parameters(
     
     # Log velocity statistics
     speeds = np.linalg.norm(velocities, axis=1)
-    logger.info(f"Generated velocities: min={np.min(speeds):.2f} m/s, max={np.max(speeds):.2f} m/s, mean={np.mean(speeds):.2f} m/s")
+    if len(speeds):
+        logger.info(f"Generated velocities: min={np.min(speeds):.2f} m/s, max={np.max(speeds):.2f} m/s, mean={np.mean(speeds):.2f} m/s")
     
     return orientations, velocities
