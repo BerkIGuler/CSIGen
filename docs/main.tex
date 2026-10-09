@@ -9,7 +9,7 @@
 
 \title{CSIGen Documentation}
 \author{Berkay Guler}
-\date{Version 0.2.0 \\ Last Updated: October 8th, 2026}
+\date{Version 0.2.1 \\ Last Updated: October 8th, 2026}
 
 
 \begin{document}
@@ -74,7 +74,7 @@ num_deployment_buildings: 1  # Number of buildings for base station deployment
 clip_terrain_to_buildings: true  # Whether to clip terrain mesh to building boundaries
 terrain_clip_margin: 15.0  # Margin around buildings when clipping (meters)
 user_shift_from_ground: 1.5  # UE height above ground (meters)
-# override_ground_material: "concrete"  # optional: assign ITU concrete to ground (omit key if unused)
+# override_ground_material: "asphalt_concrete"  # optional: "concrete" or "asphalt_concrete" (omit key if unused)
 
 # TX antenna array parameters
 tx_num_rows: 4  # Array dimensions (rows)
@@ -199,7 +199,7 @@ cfr_out_type: "numpy"  # Output backend
   \item \texttt{clip\_terrain\_to\_buildings}: Whether to clip terrain mesh to building boundaries.
   \item \texttt{terrain\_clip\_margin}: Margin around buildings when clipping (meters).
   \item \texttt{user\_shift\_from\_ground}: UE height above ground (meters).
-  \item \texttt{override\_ground\_material} (optional): If set to \texttt{"concrete"}, the scene's \texttt{ground} object is assigned an ITU concrete radio material. Omit the key or leave unset to keep scene XML materials unchanged.
+  \item \texttt{override\_ground\_material} (optional): ITU material type for the scene's \texttt{ground} object, \texttt{"concrete"} (1--100\,GHz) or \texttt{"asphalt\_concrete"} (1--40\,GHz). The material is created if the scene does not define it, and wet-ground materials are removed. Omit the key or leave it unset to keep the scene XML materials; the ITU ground materials of the scene XML (e.g. \texttt{wet\_ground}) are defined for 1--10\,GHz only.
 \end{itemize}
 
 \subsubsection{Antenna Array Parameters (TX and RX)}

@@ -20,7 +20,7 @@ TX_RX_PATTERN = Literal["tr38901", "dipole", "iso", "hw_dipole"]
 TX_RX_POLARIZATION = Literal["cross", "V", "H", "VH"]
 USER_SAMPLE_METRIC = Literal["path_gain", "rss", "sinr"]
 CFR_OUT_TYPE = Literal['drjit', 'jax', 'numpy', 'tf', 'torch']
-GROUND_MATERIAL_OVERRIDE = Literal["concrete"]
+GROUND_MATERIAL_OVERRIDE = Literal["concrete", "asphalt_concrete"]
 MOBILITY_PRESET = Literal[
     "stationary",
     "stationary_to_tx",
@@ -89,7 +89,7 @@ class ChannelConfigModel(BaseModel):
     user_shift_from_ground: Union[int, float] = Field(..., ge=0, description="Up shift in meters of users from the ground plane")
     override_ground_material: Optional[GROUND_MATERIAL_OVERRIDE] = Field(
         None,
-        description="Optional ground material override. Set to 'concrete' to force concrete ground material.",
+        description="Optional ground material override: an ITU material type, 'concrete' or 'asphalt_concrete'.",
     )
     
     # TX antenna array parameters
