@@ -9,7 +9,7 @@
 
 \title{CSIGen Documentation}
 \author{Berkay Guler}
-\date{Version 0.2.2 \\ Last Updated: October 8th, 2026}
+\date{Version 0.2.3 \\ Last Updated: October 8th, 2026}
 
 
 \begin{document}
@@ -171,6 +171,8 @@ path_solver_edge_diffraction: true  # Diffraction at edges
 path_solver_diffraction_lit_region: false  # Diffraction in LoS regions
 path_solver_seed: 1  # Random seed
 path_solver_per_tx_users_only: false  # Compute paths only for TX-associated users
+path_solver_rx_batch_size: 50  # Solve each TX's receivers in batches of this size (null = all at once)
+path_solver_spec_table_size: 400000000  # Sionna specular-chain hash table size per source (null = Sionna default)
 
 # OFDM parameters
 num_subcarriers: 32  # OFDM subcarrier count
@@ -261,6 +263,8 @@ Beyond the knobs listed here, path solving also uses \texttt{path\_solver\_max\_
   \item \texttt{path\_solver\_los\_mode}: Include line-of-sight paths.
   \item \texttt{path\_solver\_seed}: Random seed.
   \item \texttt{path\_solver\_per\_tx\_users\_only}: Compute paths only for TX-associated users.
+  \item \texttt{path\_solver\_rx\_batch\_size} (optional): Solve each TX's receivers (its own users or all users) in batches of this size. Sionna RT stores each new specular chain per receiver in a hash table of fixed size per source. When many receivers share one solve, the table fills up and new chains are discarded silently, so some NLoS paths are lost. Omit or set to \texttt{null} to solve all receivers at once.
+  \item \texttt{path\_solver\_spec\_table\_size} (optional): Minimum size of the specular-chain hash table per source (Sionna RT's internal \texttt{SBCandidateGenerator.MIN\_SPEC\_COUNT\_SIZE}; the table has $\max(\texttt{max\_num\_paths\_per\_src}, \text{this value})$ entries and takes 8 bytes per entry). Omit or set to \texttt{null} to keep the Sionna default.
 \end{itemize}
 
 \subsubsection{OFDM and CFR Parameters}

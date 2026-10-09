@@ -17,7 +17,8 @@ from src.user_equipment import set_rx_antenna_array
 from src.radio_map import solve_radio_map, sample_user_positions, filter_positions_by_edge_distance
 from src.receivers import add_receivers_from_samples
 from src.path_solver import (
-    _solve_paths_for_single_tx,
+    solve_paths_for_receivers,
+    set_specular_chain_table_size,
     get_valid_rx_mask,
     get_rx_los_nlos_mask,
     _compute_rx_valid_and_los_masks,
@@ -96,7 +97,7 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
         - path_solver_specular_reflection, path_solver_diffuse_reflection
         - path_solver_refraction, path_solver_diffraction, path_solver_edge_diffraction
         - path_solver_diffraction_lit_region, path_solver_seed
-        - path_solver_per_tx_users_only
+        - path_solver_per_tx_users_only, path_solver_rx_batch_size, path_solver_spec_table_size
         
         OFDM/CFR:
         - num_subcarriers, num_ofdm_symbols, subcarrier_spacing
@@ -234,47 +235,70 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
     logger.info("Step 7 & 8: Solving paths and computing CFR per TX (streaming)...")
 
     per_tx_users_only = config['path_solver_per_tx_users_only']
+    rx_batch_size = config.get('path_solver_rx_batch_size')
+    if config.get('path_solver_spec_table_size') is not None:
+        set_specular_chain_table_size(config['path_solver_spec_table_size'])
+    all_rx_names = [f"UE_{i}" for i in range(total_users)]
 
     for tx_idx in range(num_txs_actual):
-        # Solve paths for this TX only
-        paths_tx = _solve_paths_for_single_tx(
-            scene=scene,
-            tx_idx=tx_idx,
-            num_txs=num_txs_actual,
-            num_sectors=num_sectors,
-            num_users_per_tx=num_users_per_tx,
-            per_tx_users_only=per_tx_users_only,
-            max_depth=config['path_solver_max_depth'],
-            max_num_paths_per_src=config['path_solver_max_num_paths_per_src'],
-            samples_per_src=config['path_solver_samples_per_src'],
-            synthetic_array=config['path_solver_synthetic_array'],
-            los=config['path_solver_los_mode'],
-            specular_reflection=config['path_solver_specular_reflection'],
-            diffuse_reflection=config['path_solver_diffuse_reflection'],
-            refraction=config['path_solver_refraction'],
-            diffraction=config['path_solver_diffraction'],
-            edge_diffraction=config['path_solver_edge_diffraction'],
-            diffraction_lit_region=config['path_solver_diffraction_lit_region'],
-            seed=config['path_solver_seed'],
-        )
+        bs_id = tx_idx // num_sectors
+        sector_id = (tx_idx % num_sectors) + 1
+        tx_name = f"BS_{bs_id}_sector_{sector_id}"
 
-        # Compute CFR for this TX only
-        h_tx = compute_cfr_for_paths(
-            paths_tx=paths_tx,
-            num_subcarriers=config['num_subcarriers'],
-            num_ofdm_symbols=config['num_ofdm_symbols'],
-            subcarrier_spacing=config['subcarrier_spacing'],
-            normalize_delays=config['cfr_normalize_delays'],
-            normalize=config['cfr_normalize'],
-            out_type=config['cfr_out_type'],
-        )
+        # Receivers for this TX (its own users or all users), solved in batches
+        if per_tx_users_only:
+            start_idx = tx_idx * num_users_per_tx
+            tx_rx_names = all_rx_names[start_idx:start_idx + num_users_per_tx]
+        else:
+            tx_rx_names = all_rx_names
+        step = rx_batch_size or len(tx_rx_names)
+        rx_batches = [tx_rx_names[i:i + step] for i in range(0, len(tx_rx_names), step)]
+        if len(rx_batches) > 1 and config['cfr_out_type'] != 'numpy':
+            raise ValueError("path_solver_rx_batch_size requires cfr_out_type 'numpy'.")
 
-        # Per-RX validity and LOS/NLOS determination (single pass over tau & interactions)
-        valid_mask, rx_state_mask = _compute_rx_valid_and_los_masks(paths_tx)
-        num_total = len(valid_mask)
-        num_valid = int(np.sum(valid_mask))
-        # Binary LOS indicator aligned with the *filtered* CFR user axis
-        los_binary = (rx_state_mask[valid_mask] == 1).astype(np.int32)
+        h_parts, rx_names, los_parts = [], [], []
+        num_total = 0
+        for batch in rx_batches:
+            paths_tx, row_rx_names = solve_paths_for_receivers(
+                scene,
+                tx_name=tx_name,
+                rx_names=batch,
+                max_depth=config['path_solver_max_depth'],
+                max_num_paths_per_src=config['path_solver_max_num_paths_per_src'],
+                samples_per_src=config['path_solver_samples_per_src'],
+                synthetic_array=config['path_solver_synthetic_array'],
+                los=config['path_solver_los_mode'],
+                specular_reflection=config['path_solver_specular_reflection'],
+                diffuse_reflection=config['path_solver_diffuse_reflection'],
+                refraction=config['path_solver_refraction'],
+                diffraction=config['path_solver_diffraction'],
+                edge_diffraction=config['path_solver_edge_diffraction'],
+                diffraction_lit_region=config['path_solver_diffraction_lit_region'],
+                seed=config['path_solver_seed'],
+            )
+            h_batch = compute_cfr_for_paths(
+                paths_tx=paths_tx,
+                num_subcarriers=config['num_subcarriers'],
+                num_ofdm_symbols=config['num_ofdm_symbols'],
+                subcarrier_spacing=config['subcarrier_spacing'],
+                normalize_delays=config['cfr_normalize_delays'],
+                normalize=config['cfr_normalize'],
+                out_type=config['cfr_out_type'],
+            )
+            # Per-RX validity and LOS/NLOS determination (single pass over tau & interactions)
+            valid_mask, rx_state_mask = _compute_rx_valid_and_los_masks(paths_tx)
+            del paths_tx
+
+            # Keep only receivers with at least one valid path
+            h_parts.append(h_batch[valid_mask])
+            rx_names.extend(name for name, ok in zip(row_rx_names, valid_mask) if ok)
+            los_parts.append((rx_state_mask[valid_mask] == 1).astype(np.int32))
+            num_total += len(valid_mask)
+
+        h_tx = h_parts[0] if len(h_parts) == 1 else np.concatenate(h_parts, axis=0)
+        # Binary LOS indicator aligned with the CFR user axis
+        los_binary = np.concatenate(los_parts)
+        num_valid = len(rx_names)
         num_los = int(np.sum(los_binary))
         num_nlos = int(num_valid - num_los)
         if num_valid < num_total:
@@ -291,39 +315,17 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
                 num_nlos,
             )
 
-        # Keep only channels (receivers) with at least one valid path
-        h_tx = h_tx[valid_mask]
-
-        # Derive TX name and position
-        bs_id = tx_idx // num_sectors
-        sector_id = (tx_idx % num_sectors) + 1
-        tx_name = f"BS_{bs_id}_sector_{sector_id}"
         tx_obj = scene.get(tx_name)
         tx_pos = tx_obj.position
         if hasattr(tx_pos, 'numpy'):
             tx_pos = tx_pos.numpy()
 
-        # RX positions for this TX, aligned with CFR user axis (before valid filter)
-        if per_tx_users_only:
-            start_idx = tx_idx * num_users_per_tx
-            end_idx = start_idx + num_users_per_tx
-            rx_names_all = [f"UE_{i}" for i in range(start_idx, end_idx)]
-        else:
-            rx_names_all = [f"UE_{i}" for i in range(total_users)]
-
-        rx_positions_all = []
-        for rx_name in rx_names_all:
-            rx = scene.get(rx_name)
-            pos = rx.position
-            if hasattr(pos, 'numpy'):
-                pos = pos.numpy()
-            else:
-                pos = np.array(pos)
-            rx_positions_all.append(pos)
-        rx_positions_all = np.stack(rx_positions_all, axis=0)
-        # Restrict to receivers with at least one valid path (same order as h_tx)
-        rx_positions = rx_positions_all[valid_mask]
-        rx_names = [rx_names_all[i] for i in np.where(valid_mask)[0]]
+        # RX positions aligned with the CFR user axis
+        rx_positions = []
+        for rx_name in rx_names:
+            pos = scene.get(rx_name).position
+            rx_positions.append(pos.numpy() if hasattr(pos, 'numpy') else np.array(pos))
+        rx_positions = np.stack(rx_positions, axis=0) if rx_positions else np.zeros((0, 3))
 
         # Prepare per-TX metadata (rx_positions/rx_names and h_tx are restricted to valid channels)
         tx_metadata = {
