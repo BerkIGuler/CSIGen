@@ -14,6 +14,17 @@ python scripts/run.py --config path/to/your_config.yaml
 
 Run from the repository root (or ensure Python can resolve the `src` package as in `scripts/run.py`). The script loads the config, streams channel outputs per transmit sector, and writes timestamped artifacts under `output/` (see `docs/main.pdf` for layout and metadata).
 
+## Path data
+
+With a synthetic array (`path_solver_synthetic_array: true`, as in the example configs), each file also holds the paths of every channel (delay, Doppler shift, angles of departure and arrival, coefficient per antenna pair, interaction types) and per-channel statistics such as the delay and angular spreads, the K-factor and the strongest path. The saved CFR is computed from these paths, so it can be rebuilt exactly, or for another numerology, without new ray tracing:
+
+```python
+from src.path_data import load_cfr
+h = load_cfr("output/<scene_name>/<run_id>/channel_tx_0.npz")
+```
+
+`load_cfr` also takes another numerology (`num_subcarriers`, `subcarrier_spacing`, `num_ofdm_symbols`, `symbol_duration`), other planar arrays (`tx_array=dict(num_rows=8, num_cols=8)`), other RX velocities (`rx_velocities=[20.0, 0.0, 0.0]`) or only some of the paths (`max_paths=3`, `max_bounces=0` for LoS only, `power_range_db`, `exclude_interactions`). With `save_cfr: false` in the config, the files hold only the paths. See `docs/main.pdf` for the fields.
+
 ## Splitting a run into train and test
 
 ```bash
@@ -66,7 +77,7 @@ This project is released **publicly** to help accelerate **wireless AI research*
 ## Repository layout
 
 ```
-├── src/              # Library: scene setup, radio map / path solvers, CFR, config validation
+├── src/              # Library: scene setup, radio map / path solvers, path data, CFR, config validation
 ├── config/           # YAML configs; examples under examples/
 │                     #   (eval/ and pretrain/ city configs)
 ├── scenes/           # Example scenes: <city>_1/scene.xml (+ meshes referenced there)

@@ -22,6 +22,8 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 import yaml
 
+from src.path_data import PATH_KEYS, slice_path_data
+
 logger = logging.getLogger(__name__)
 
 USER_SPLITS = ("users", "area")
@@ -30,7 +32,7 @@ TRAIN, TEST, DROPPED = 0, 1, -1
 SIDE_NAMES = {TRAIN: "train", TEST: "test"}
 
 # Per-row metadata fields, sliced together with the CFR rows
-ROW_FIELDS = ("rx_positions", "rx_names", "los_binary", "rx_serving_tx")
+ROW_FIELDS = ("rx_positions", "rx_names", "los_binary", "rx_serving_tx", "rx_velocities", "rx_orientations")
 
 # What each method holds out, for split.yaml
 TEST_LABELS = {
@@ -299,7 +301,8 @@ def write_split(run_dir: Path, out_dir: Path, tx_side: Dict[int, int], user_side
     num_dropped = 0
     for f in _tx_files(run_dir):
         with np.load(f, allow_pickle=True) as z:
-            h = z["h"]
+            h = z["h"] if "h" in z else None
+            path_data = {key: z[key] for key in PATH_KEYS} if "paths_offsets" in z else None
             meta = z["metadata"].item()
         tx = int(meta["tx_idx"])
         names = [str(n) for n in meta["rx_names"]]
@@ -311,13 +314,20 @@ def write_split(run_dir: Path, out_dir: Path, tx_side: Dict[int, int], user_side
             for key in ROW_FIELDS:
                 if key in m:
                     m[key] = np.asarray(m[key])[rows]
+            if "path_stats" in m:
+                m["path_stats"] = {k: np.asarray(v)[rows] for k, v in m["path_stats"].items()}
             m["rx_names"] = [names[i] for i in rows]
             m["source_rows"] = rows.astype(np.int64)
             m["num_valid_channels"] = int(len(rows))
-            m["cfr_shape"] = (len(rows),) + tuple(h.shape[1:])
+            m["cfr_shape"] = (len(rows),) + tuple(m["cfr_shape"][1:])
             m["split_side"] = SIDE_NAMES[s]
             _rename_source_counts(m)
-            np.savez_compressed(d / f.name, h=h[rows], shape=m["cfr_shape"], dtype=str(h.dtype), metadata=m)
+            arrays = {}
+            if h is not None:
+                arrays.update(h=h[rows], shape=m["cfr_shape"], dtype=str(h.dtype))
+            if path_data is not None:
+                arrays.update(slice_path_data(path_data, rows))
+            np.savez_compressed(d / f.name, metadata=m, **arrays)
             channels[s][tx] = int(len(rows))
             users[s].update(m["rx_names"])
             shapes[s].append(list(m["cfr_shape"]))

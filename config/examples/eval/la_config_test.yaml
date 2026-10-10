@@ -124,4 +124,8 @@ subcarrier_spacing: 30000.0  # Spacing in Hz
 # Channel Frequency Response (CFR) parameters
 cfr_normalize_delays: false  # Normalize delays relative to first path
 cfr_normalize: false  # Normalize CFR magnitude
-cfr_out_type: "numpy"  # Output backend
+cfr_out_type: "numpy"  # Output backend (used only without a synthetic array)
+
+# Saved data
+save_paths: true  # Save the per-path data of every channel (needs a synthetic array)
+save_cfr: true  # Save the CFR h; if false, rebuild it from the paths with src.path_data.load_cfr

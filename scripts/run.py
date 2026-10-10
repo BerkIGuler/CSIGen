@@ -90,8 +90,8 @@ def main():
             num_sectors = int(tx_metadata['num_sectors'])
             array_info = {key: tx_metadata[key] for key in ('cfr_axes', 'tx_array', 'rx_array')}
 
-        cfr_shapes.append(list(h_tx.shape))
-        cfr_dtypes.append(str(h_tx.dtype))
+        cfr_shapes.append(list(tx_metadata['cfr_shape']))
+        cfr_dtypes.append(tx_metadata['cfr_dtype'])
 
         output_path = output_dir / f"channel_tx_{tx_idx}.npz"
         # Save channel data + metadata (including positions)
@@ -99,8 +99,9 @@ def main():
             h=h_tx,
             output_path=output_path,
             metadata=tx_metadata,
+            path_data=item['path_data'],
         )
-        num_valid = tx_metadata.get('num_valid_channels', h_tx.shape[0])
+        num_valid = tx_metadata['num_valid_channels']
         logger.info(
             "Saved channel data for TX %s (%s) to %s (%s valid channels)",
             tx_idx, tx_metadata['tx_name'], output_path, num_valid,

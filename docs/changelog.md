@@ -2,6 +2,18 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.3] - 2026-10-10
+
+### Added
+
+- **Path data.** With a synthetic array, each `channel_tx_<i>.npz` now also holds the paths of every channel: the coefficient per antenna pair (`paths_a`), the delay, the Doppler shift, the angles of departure and arrival, and the interaction type of each bounce, sorted by power, with `paths_offsets` marking the paths of each channel. All valid paths are kept. Their size grows with the number of paths: with a few paths per channel they take a few percent of the size of the CFR, but with many paths, for example from diffuse scattering, they can exceed it. Set `save_paths: false` to leave them out.
+- **Path statistics and mobility.** The per-TX metadata adds `path_stats`, per-channel arrays computed from all paths: number of paths, path gain, TX-RX distance, first and mean delay, delay spread, K-factor, azimuth and zenith spreads of departure and arrival, the delay, angles and Doppler shift of the strongest path and its share of the power, the largest Doppler shift, the number of interactions of the strongest path and the largest over the paths, and the share of the power in the LoS path and in paths with a specular reflection, a diffuse reflection, a refraction or a diffraction. It also adds `tx_orientation`, and `rx_velocities` and `rx_orientations`, one row per channel.
+- **CFR from the paths.** `load_cfr(file)` rebuilds the saved CFR of a file exactly from its paths. With other arguments, it computes the CFR without new ray tracing for another numerology or normalization (subcarriers, subcarrier spacing, OFDM symbols, symbol duration, for example with a cyclic prefix), for other planar arrays (`tx_array` and `rx_array` change the rows, columns and spacing; the element pattern, polarization and orientation stay those of the run), or for other RX velocities (`rx_velocities`, one velocity for all RXs or one per channel, in m/s; the Doppler shifts change, the paths stay those of the run), or from only some of the paths (`max_paths` keeps the strongest paths, `power_range_db` the paths within this many dB of the strongest, `max_bounces` the paths with at most this many interactions, 0 for LoS only, and `exclude_interactions` drops the paths with, for example, a diffraction). With `save_cfr: false`, the files hold only the paths. The split script also slices the paths and statistics.
+
+### Changed
+
+- **CFR computation.** With a synthetic array, CSIGen now computes the CFR itself from the saved paths, in float64, instead of calling Sionna's `Paths.cfr`, so the saved CFR is exactly reproducible from the saved paths. The formula is the same, but Sionna computes the carrier phase in float32, which is accurate to about 0.01 rad at 28 GHz, so new CFRs differ from those of earlier versions by about 1% at 28 GHz and 0.1% at 3.5 GHz, with no systematic change. Neither is more accurate, since the delays are float32 in both. The per-TX metadata records the CFR parameters in `cfr_params`, how the CFR was computed in `cfr_source`, and whether `h` was saved in `cfr_saved`. Without a synthetic array, Sionna's `Paths.cfr` is used as before, and paths cannot be saved.
+
 ## [0.3.2] - 2026-10-09
 
 ### Added
