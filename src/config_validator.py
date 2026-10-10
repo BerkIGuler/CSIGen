@@ -200,6 +200,14 @@ class ChannelConfigModel(BaseModel):
     cfr_normalize_delays: bool = Field(..., description="Whether to normalize delays in CFR computation")
     cfr_normalize: bool = Field(..., description="Whether to normalize the CFR")
     cfr_out_type: CFR_OUT_TYPE = Field(..., description="Output type for CFR")
+
+    # Saved data
+    save_paths: Optional[bool] = Field(
+        None,
+        description="Save the per-path data of every channel (needs a synthetic array); "
+                    "default: true with a synthetic array, false without",
+    )
+    save_cfr: bool = Field(True, description="Save the CFR h; if false, rebuild it from the paths with load_cfr")
     
     @field_validator('scene_xml_path')
     @classmethod
@@ -244,6 +252,26 @@ class ChannelConfigModel(BaseModel):
                 f"sources = {entries} x {num_sources} exceeds Sionna RT's 32-bit indices (2^32). "
                 "Use path_solver_synthetic_array: true or smaller sizes."
             )
+        return self
+
+    @model_validator(mode='after')
+    def validate_saved_data(self):
+        """
+        Check that the run saves the CFR or paths it can be rebuilt from.
+
+        Paths are saved, and the CFR is computed from them, only with a
+        synthetic array, where each path has one delay, Doppler shift and
+        direction for all antenna pairs.
+        """
+        if self.save_paths is None:
+            self.save_paths = self.path_solver_synthetic_array
+        if not self.path_solver_synthetic_array:
+            if self.save_paths:
+                raise ValueError("save_paths requires path_solver_synthetic_array: true")
+            if not self.save_cfr:
+                raise ValueError("save_cfr: false requires saved paths, i.e. path_solver_synthetic_array: true")
+        elif not (self.save_paths or self.save_cfr):
+            raise ValueError("At least one of save_paths and save_cfr must be true")
         return self
 
     @model_validator(mode='after')

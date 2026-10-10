@@ -24,6 +24,15 @@ from src.path_solver import (
     _compute_rx_valid_and_los_masks,
 )
 from src.channel import compute_cfr_for_paths
+from src.path_data import (
+    extract_path_data,
+    concat_path_data,
+    empty_path_data,
+    cfr_from_paths,
+    path_stats,
+    PATH_FIELDS,
+    PATH_STATS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +111,7 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
         OFDM/CFR:
         - num_subcarriers, num_ofdm_symbols, subcarrier_spacing
         - cfr_normalize_delays, cfr_normalize, cfr_out_type
+        - save_paths, save_cfr
         
         Scene Setup:
         - scene_center, antenna_height_offset, num_deployment_buildings
@@ -113,7 +123,10 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
         Per-TX dictionary with keys:
         - 'tx_idx': int
         - 'tx_name': str
-        - 'h_tx': np.ndarray (CFR for this TX; only valid channels)
+        - 'h_tx': np.ndarray (CFR for this TX; only valid channels), or None
+          if save_cfr is false
+        - 'path_data': dict of the paths_* arrays (see src.path_data), or None
+          if save_paths is false
         - 'tx_metadata': dict with TX/RX positions, global config-derived info,
           and per-channel metadata such as a LOS/NLOS indicator array
     """
@@ -238,6 +251,23 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
     rx_batch_size = config.get('path_solver_rx_batch_size')
     set_specular_chain_table_size(config.get('path_solver_spec_table_size'))
     all_rx_names = [f"UE_{i}" for i in range(total_users)]
+    synthetic = config['path_solver_synthetic_array']
+    # None (the default) means: save paths with a synthetic array, as in validate_saved_data
+    save_paths = config.get('save_paths')
+    if save_paths is None:
+        save_paths = synthetic
+    save_cfr = config.get('save_cfr', True)
+    # With a synthetic array, CSIGen computes the CFR from the path data it
+    # saves (cfr_from_paths), so h can be rebuilt from the file; otherwise
+    # Sionna's Paths.cfr is used
+    cfr_params = {
+        'carrier_frequency': float(carrier_frequency),
+        'num_subcarriers': int(config['num_subcarriers']),
+        'num_ofdm_symbols': int(config['num_ofdm_symbols']),
+        'subcarrier_spacing': float(config['subcarrier_spacing']),
+        'normalize_delays': bool(config['cfr_normalize_delays']),
+        'normalize': bool(config['cfr_normalize']),
+    }
     # Serving (sampling) TX of each user UE_k, as numbered by add_receivers_from_samples
     rx_serving_tx_all = np.repeat(np.arange(num_txs_actual), users_per_tx)
 
@@ -251,10 +281,11 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             tx_rx_names = rx_names_for_tx(users_per_tx, tx_idx)
         else:
             tx_rx_names = all_rx_names
-        if rx_batch_size and len(tx_rx_names) > rx_batch_size and config['cfr_out_type'] != 'numpy':
+        if (not synthetic and rx_batch_size and len(tx_rx_names) > rx_batch_size
+                and config['cfr_out_type'] != 'numpy'):
             raise ValueError("path_solver_rx_batch_size requires cfr_out_type 'numpy'.")
 
-        h_parts, rx_names, los_parts = [], [], []
+        h_parts, rx_names, los_parts, path_parts = [], [], [], []
         num_total = 0
         buffer_fill = 0.0
         for paths_tx, row_rx_names, batch_fill in iter_paths_for_receivers(
@@ -275,33 +306,51 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             diffraction_lit_region=config['path_solver_diffraction_lit_region'],
             seed=config['path_solver_seed'],
         ):
-            h_batch = compute_cfr_for_paths(
-                paths_tx=paths_tx,
-                num_subcarriers=config['num_subcarriers'],
-                num_ofdm_symbols=config['num_ofdm_symbols'],
-                subcarrier_spacing=config['subcarrier_spacing'],
-                normalize_delays=config['cfr_normalize_delays'],
-                normalize=config['cfr_normalize'],
-                out_type=config['cfr_out_type'],
-            )
             # Per-RX validity and LOS/NLOS determination (single pass over tau & interactions)
             valid_mask, rx_state_mask = _compute_rx_valid_and_los_masks(paths_tx)
+            if synthetic:
+                batch_paths = extract_path_data(paths_tx, valid_mask)
+                path_parts.append(batch_paths)
+                if save_cfr:
+                    h_parts.append(cfr_from_paths(batch_paths, **cfr_params))
+            else:
+                h_batch = compute_cfr_for_paths(
+                    paths_tx=paths_tx,
+                    num_subcarriers=config['num_subcarriers'],
+                    num_ofdm_symbols=config['num_ofdm_symbols'],
+                    subcarrier_spacing=config['subcarrier_spacing'],
+                    normalize_delays=config['cfr_normalize_delays'],
+                    normalize=config['cfr_normalize'],
+                    out_type=config['cfr_out_type'],
+                )
+                h_parts.append(h_batch[valid_mask])
             del paths_tx
 
             # Keep only receivers with at least one valid path
-            h_parts.append(h_batch[valid_mask])
             rx_names.extend(name for name, ok in zip(row_rx_names, valid_mask) if ok)
             los_parts.append((rx_state_mask[valid_mask] == 1).astype(np.int32))
             num_total += len(valid_mask)
             buffer_fill = max(buffer_fill, batch_fill)
 
-        if not h_parts:
+        if not los_parts:
             # No receivers for this TX (e.g. a sector without valid radio-map cells)
             logger.info("TX %s: no receivers to solve", tx_idx)
-            h_parts = [np.zeros((0, scene.rx_array.num_ant, 1, scene.tx_array.num_ant,
-                                 config['num_ofdm_symbols'], config['num_subcarriers']), dtype=np.complex64)]
             los_parts = [np.zeros(0, dtype=np.int32)]
-        h_tx = h_parts[0] if len(h_parts) == 1 else np.concatenate(h_parts, axis=0)
+        cfr_shape = (len(rx_names), scene.rx_array.num_ant, 1, scene.tx_array.num_ant,
+                     config['num_ofdm_symbols'], config['num_subcarriers'])
+        if not save_cfr:
+            h_tx = None
+        elif h_parts:
+            h_tx = h_parts[0] if len(h_parts) == 1 else np.concatenate(h_parts, axis=0)
+        else:
+            h_tx = np.zeros(cfr_shape, dtype=np.complex64)
+        if not synthetic:
+            path_data = None
+        elif path_parts:
+            path_data = concat_path_data(path_parts)
+        else:
+            path_data = empty_path_data(scene.rx_array.num_ant, scene.tx_array.num_ant,
+                                        config['path_solver_max_depth'])
         # Binary LOS indicator aligned with the CFR user axis
         los_binary = np.concatenate(los_parts)
         num_valid = len(rx_names)
@@ -321,24 +370,35 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
                 num_nlos,
             )
 
+        keep_paths = path_data is not None and save_paths
+
         tx_obj = scene.get(tx_name)
         tx_pos = tx_obj.position
         if hasattr(tx_pos, 'numpy'):
             tx_pos = tx_pos.numpy()
+        tx_orientation = np.asarray(tx_obj.orientation.numpy(), dtype=np.float64).reshape(3)
 
-        # RX positions aligned with the CFR user axis
-        rx_positions = []
+        # RX positions, velocities and orientations, aligned with the CFR user axis
+        rx_positions, rx_velocities, rx_orientations = [], [], []
         for rx_name in rx_names:
-            pos = scene.get(rx_name).position
+            rx_obj = scene.get(rx_name)
+            pos = rx_obj.position
             rx_positions.append(pos.numpy() if hasattr(pos, 'numpy') else np.array(pos))
+            rx_velocities.append(np.asarray(rx_obj.velocity.numpy()).reshape(3))
+            rx_orientations.append(np.asarray(rx_obj.orientation.numpy()).reshape(3))
         # Same layout as Sionna's positions, [num_rx, 3, 1]
         rx_positions = np.stack(rx_positions, axis=0) if rx_positions else np.zeros((0, 3, 1), dtype=np.float32)
+        # [num_rx, 3]
+        rx_velocities = np.array(rx_velocities, dtype=np.float32).reshape(-1, 3)
+        rx_orientations = np.array(rx_orientations, dtype=np.float32).reshape(-1, 3)
 
         # Prepare per-TX metadata (rx_positions/rx_names and h_tx are restricted to valid channels)
         tx_metadata = {
             'tx_idx': tx_idx,
             'tx_name': tx_name,
             'tx_position': tx_pos,
+            # TX orientation (rad; Sionna's angles of rotation about z, y and x)
+            'tx_orientation': tx_orientation,
             'rx_positions': rx_positions,
             'rx_names': rx_names,
             # Per-valid-channel LOS indicator: 1 = LoS, 0 = NLoS
@@ -354,17 +414,35 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             # of this TX, as a fraction of max_num_paths_per_src; at 1.0 or
             # above, paths were discarded
             'path_buffer_fill': float(buffer_fill),
-            'cfr_shape': h_tx.shape,
-            'cfr_dtype': str(h_tx.dtype),
+            # RX velocity (m/s) and orientation (rad; Sionna's angles of rotation about z, y and x)
+            'rx_velocities': rx_velocities,
+            'rx_orientations': rx_orientations,
+            'cfr_saved': h_tx is not None,
+            'cfr_shape': cfr_shape,
+            'cfr_dtype': str(h_tx.dtype) if h_tx is not None else 'complex64',
             'cfr_axes': CFR_AXES,
+            # What cfr_from_paths needs to rebuild h from the saved paths
+            'cfr_params': cfr_params,
+            'cfr_source': 'cfr_from_paths' if synthetic else 'sionna_paths_cfr',
+            'paths_saved': keep_paths,
             'tx_array': array_layout(config, 'tx', scene.tx_array.num_ant),
             'rx_array': array_layout(config, 'rx', scene.rx_array.num_ant),
             'config': config,
         }
 
+        if path_data is not None:
+            # Per-channel statistics, from all paths (also when they are not saved)
+            tx_metadata['path_stats'] = path_stats(path_data, tx_pos, rx_positions)
+            tx_metadata['path_stats_fields'] = PATH_STATS
+        if keep_paths:
+            tx_metadata['path_fields'] = PATH_FIELDS
+        else:
+            path_data = None
+
         yield {
             'tx_idx': tx_idx,
             'tx_name': tx_name,
             'h_tx': h_tx,
+            'path_data': path_data,
             'tx_metadata': tx_metadata,
         }

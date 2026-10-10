@@ -108,21 +108,24 @@ def compute_cfr(
 
 
 def save_channel_data(
-    h: np.ndarray,
+    h: Optional[np.ndarray],
     output_path: Path,
-    metadata: Optional[Dict] = None
+    metadata: Optional[Dict] = None,
+    path_data: Optional[Dict[str, np.ndarray]] = None,
 ) -> None:
     """
     Save channel data to file.
     
     Parameters
     ----------
-    h : np.ndarray
-        Channel frequency response array
+    h : np.ndarray or None
+        Channel frequency response array; None to save only the paths
     output_path : Path
         Path to save file (will save as .npz format)
     metadata : dict, optional
         Optional metadata dict to save alongside data
+    path_data : dict, optional
+        The paths_* arrays (see src.path_data), saved as top-level keys
     """
     output_path = Path(output_path)
     
@@ -130,11 +133,11 @@ def save_channel_data(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
     # Prepare save dict
-    save_dict = {
-        'h': h,
-        'shape': h.shape,
-        'dtype': str(h.dtype)
-    }
+    save_dict = {}
+    if h is not None:
+        save_dict.update(h=h, shape=h.shape, dtype=str(h.dtype))
+    if path_data is not None:
+        save_dict.update(path_data)
     
     # Add metadata if provided
     if metadata is not None:
@@ -143,7 +146,10 @@ def save_channel_data(
     # Save as .npz
     np.savez_compressed(output_path, **save_dict)
     print(f"Saved channel data to {output_path}")
-    print(f"  Shape: {h.shape}")
-    print(f"  Dtype: {h.dtype}")
+    if h is not None:
+        print(f"  Shape: {h.shape}")
+        print(f"  Dtype: {h.dtype}")
+    if path_data is not None:
+        print(f"  Paths: {len(path_data['paths_tau'])}")
     if metadata:
         print(f"  Metadata keys: {list(metadata.keys())}")

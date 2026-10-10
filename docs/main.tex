@@ -5,521 +5,395 @@
 \hypersetup{urlcolor=blue}
 \usepackage{minted}
 \usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{tabularx}
 \usepackage[margin=1in]{geometry}
+
+\setminted{fontsize=\footnotesize, breaklines=true}
+\newcommand{\key}[1]{\texttt{#1}}
 
 \title{CSIGen Documentation}
 \author{Berkay Guler}
-\date{Version 0.3.2 \\ Last Updated: October 9th, 2026}
-
+\date{Version 0.3.3 \\ Last Updated: October 10th, 2026}
 
 \begin{document}
+\sloppy
 
 \maketitle
-
+\tableofcontents
 \clearpage
 
-\section{Scene File Generation}
-The Geo2SigMap package provides scripts to extract an XML file containing scene information (buildings and ground terrain) from selected bounding box coordinates.
+\section{Overview}
+CSIGen generates large wireless channel datasets with Sionna RT from a single YAML config. For a 3D city scene it places multi-sector base stations on the highest rooftops, samples users from a ray-traced radio map, traces the paths from every sector to its users, and saves per sector the channel frequency response (CFR), the paths, and the metadata needed to use and reproduce them.
 
-\flushleft
-For example, the following command generates the file for the specified bounding box.
+\subsection{Quick Start}
+Install the pinned dependencies (Python 3.12, Sionna RT 2.2.0; a CUDA GPU is strongly recommended) and run a config from the repository root:
+\begin{minted}{bash}
+pip install -r requirements.txt
+python scripts/run.py --config config/examples/eval/la_config_test.yaml
+\end{minted}
+The run writes \texttt{output/<scene\_name>/<YYYYmmdd\_HHMMSS>/} with one \texttt{channel\_tx\_<t>.npz} per sector and a \texttt{metadata.yaml} (Section~\ref{sec:output}). Load a file with:
+\begin{minted}{python}
+import numpy as np
+z = np.load("output/la_1/<run_id>/channel_tx_0.npz", allow_pickle=True)
+h = z["h"]                       # [users, rx_ant, 1, tx_ant, ofdm_symbols, subcarriers], complex64
+meta = z["metadata"].item()      # positions, LoS labels, path statistics, config, ...
+\end{minted}
+The example configs are in \texttt{config/examples/}: \texttt{pretrain/} at 3.5\,GHz and \texttt{eval/} at 28\,GHz, for the included scenes. To split a run into train and test runs, see Section~\ref{sec:splits}.
 
-\begin{verbatim}
-    scenegen bbox -71.0602 42.3512 -71.0484 42.3591 --data-dir
-    scenes/sample_scene --enable-lidar-terrain
-\end{verbatim}
-
-Note: \href{https://bboxfinder.com}{bboxfinder.com} is a simple website for obtaining the bounding box coordinates of a desired region. It can also be used to visualize a bounding box, given its coordinates.
-
-If the \texttt{--enable-lidar-terrain} flag is not passed, the generated scene does not have elevation information, and a simple horizontal plane is used as the ground terrain.
-
-The generated scene files are saved under the \texttt{--data-dir} folder, with the \texttt{scene.xml} file containing references to mesh objects stored as \texttt{.ply} files under the \texttt{mesh} subfolder. Load the scene using \texttt{load\_scene(scene.xml, merge\_shapes=False)}. Setting \texttt{merge\_shapes=True} prevents objects from loading properly.
-
-\vspace{1em}
-
-After loading the scene, access objects using \texttt{scene.objects["object\_name"]}. Three objects are particularly important:
+\subsection{Conventions}
 \begin{itemize}
-  \item \texttt{building\_x\_rooftop}: Rooftop object of the $x$th building
-  \item \texttt{building\_x\_wall}: Wall object of the $x$th building
-  \item \texttt{ground}: The terrain object from \texttt{lidar\_terrain.ply}
+  \item \textbf{Names and indices.} Base station $b$ has sectors \texttt{BS\_<b>\_sector\_<s>}, $s = 1, \dots, N_s$ for $N_s$ = \key{num\_sectors}; their TX index is $t = b N_s + s - 1$, which numbers the output files. Users are \texttt{UE\_<k>}, numbered TX by TX: the users sampled for TX $t$ follow those of TX $t-1$.
+  \item \textbf{Cells.} A \emph{cell} is a triangle of the measurement-surface mesh on which the radio map is computed (Section~\ref{sec:pipeline}), not a cell of the cellular network. The coverage area of a base station antenna is called a \emph{sector}.
+  \item \textbf{Units.} Meters, seconds, Hz and radians, except for the config, which gives angles in degrees. Element spacings are in carrier wavelengths. Positions and angles are in the scene's global frame.
+  \item \textbf{CFR scale.} \texttt{h} is the unitless channel gain (power gain $|h|^2$, about the path loss), not scaled by the TX power: \key{tx\_power\_dbm} enters only the radio-map metrics \texttt{rss} and \texttt{sinr} used for user sampling. The received power on a subcarrier is $P |h|^2$, or $P |\mathbf{h}\mathbf{w}|^2$ with a unit-norm precoder $\mathbf{w}$, for the transmit power $P$ you assign to that subcarrier. With \key{cfr\_normalize: true}, \texttt{load\_cfr(file, normalize=False)} recovers the unnormalized CFR from the saved paths, and \texttt{path\_stats} holds each channel's \texttt{path\_gain\_db}.
 \end{itemize}
 
-Scene metadata (longitude/latitude bounding box values) is also stored in \texttt{scene.xml}.
+\clearpage
+\section{Scenes}
+\subsection{Generating a Scene}
+Scenes are made with the \texttt{scenegen} tool of Geo2SigMap from a longitude/latitude bounding box (\href{https://bboxfinder.com}{bboxfinder.com} helps to pick one):
+\begin{minted}{bash}
+scenegen bbox -71.0602 42.3512 -71.0484 42.3591 --data-dir scenes/sample_scene --enable-lidar-terrain
+\end{minted}
+The folder gets \texttt{scene.xml}, which references \texttt{.ply} meshes under \texttt{mesh/} and stores the bounding box. Without \texttt{--enable-lidar-terrain}, the ground is a flat plane. CSIGen needs the scene's buildings, named \texttt{building\_<x>\_rooftop} and \texttt{building\_<x>\_wall}, and the terrain object \texttt{ground}, on which users are placed. Load scenes with \texttt{load\_scene(path, merge\_shapes=False)}; merged shapes lose the per-building objects.
+
+\subsection{Materials}
+\label{sec:materials}
+Buildings and ground use ITU materials (mostly \texttt{concrete} and \texttt{metal}). The ITU ground models of the scene files (\texttt{wet\_ground} and others) are defined for 1--10\,GHz only, so above 10\,GHz set \key{override\_ground\_material}. All materials have Sionna's default scattering coefficient of 0, so the scenes produce no diffuse paths, even with diffuse reflection enabled.
+
+\subsection{Available Scenes}
+The repository includes five downtown scenes under \texttt{scenes/<name>/scene.xml} (Fig.~\ref{fig:scenes}).
+\begin{figure}[h]
+  \centering
+  \begin{subfigure}{0.32\textwidth}\includegraphics[width=\textwidth]{figures/boston_1_cm.png}\caption{\texttt{boston\_1}}\end{subfigure}
+  \begin{subfigure}{0.32\textwidth}\includegraphics[width=\textwidth]{figures/chicago_1_cm.png}\caption{\texttt{chicago\_1}}\end{subfigure}
+  \begin{subfigure}{0.32\textwidth}\includegraphics[width=\textwidth]{figures/nyc_1_cm.png}\caption{\texttt{nyc\_1} (Manhattan)}\end{subfigure}
+
+  \begin{subfigure}{0.32\textwidth}\includegraphics[width=\textwidth]{figures/sf_1_cm.png}\caption{\texttt{sf\_1}}\end{subfigure}
+  \begin{subfigure}{0.32\textwidth}\includegraphics[width=\textwidth]{figures/la_1_cm.png}\caption{\texttt{la\_1}}\end{subfigure}
+  \caption{Included scenes (Boston, Chicago, New York, San Francisco and Los Angeles downtowns).}
+  \label{fig:scenes}
+\end{figure}
 
 \clearpage
+\section{Configuration}
+\label{sec:config}
+A run is fully defined by one YAML file. All keys are required except those marked optional below; \texttt{load\_validated\_config(path)} (\texttt{src.config\_validator}) checks types, ranges and combinations before anything runs. A complete example:
 
-\section{Channel Generation}
-This framework enables generation of large-scale channel state information (CSI) datasets with customizable simulation parameters via the following configuration file.
+\begin{minted}[frame=single, framesep=1mm, bgcolor=lightgray!20, linenos, label=config.yaml]{yaml}
+# Scene
+scene_xml_path: "./scenes/boston_1/scene.xml"
+carrier_frequency: 3500000000.0  # Hz
 
-\begin{minted}[
-  frame=single,
-  framesep=1mm,
-  baselinestretch=1,
-  bgcolor=lightgray!20,
-  linenos,
-  breaklines=true,
-  fontsize=\footnotesize,
-  label=config.yaml
-]{yaml}
-# Example configuration for channel generation
+# Scene setup
+scene_center: [0.0, 0.0]          # [x, y] (m); BS antennas are placed toward it
+antenna_height_offset: 10.0       # BS antenna height above the rooftop (m)
+num_deployment_buildings: 1       # number of base stations, on the highest buildings
+clip_terrain_to_buildings: true   # clip the ground to the building area
+terrain_clip_margin: 15.0         # margin around the buildings when clipping (m)
+user_shift_from_ground: 1.5       # UE height above ground (m)
+# override_ground_material: "asphalt_concrete"  # optional: "concrete" or "asphalt_concrete"
 
-# Scene configuration
-scene_xml_path: "./scenes/boston_1/scene.xml"  # Path to the 3D scene XML file generated by scenegen
-carrier_frequency: 3500000000.0  # Carrier frequency in Hz
+# TX (base station) array; RX (user) array with the same keys and rx_ prefix
+tx_num_rows: 4
+tx_num_cols: 8
+tx_vertical_spacing: 0.5          # wavelengths
+tx_horizontal_spacing: 0.5        # wavelengths
+tx_pattern: "tr38901"             # tr38901, dipole, iso or hw_dipole
+tx_polarization: "V"              # V, H, VH or cross (±45°)
+rx_num_rows: 1
+rx_num_cols: 1
+rx_vertical_spacing: 0.5
+rx_horizontal_spacing: 0.5
+rx_pattern: "iso"
+rx_polarization: "V"
 
-# Scene setup parameters
-scene_center: [0.0, 0.0]  # 2D coordinate [x, y] specifying scene center in meters
-antenna_height_offset: 10.0  # Vertical offset of base station antennas above rooftops (meters)
-num_deployment_buildings: 1  # Number of buildings for base station deployment
-clip_terrain_to_buildings: true  # Whether to clip terrain mesh to building boundaries
-terrain_clip_margin: 15.0  # Margin around buildings when clipping (meters)
-user_shift_from_ground: 1.5  # UE height above ground (meters)
-# override_ground_material: "asphalt_concrete"  # optional: "concrete" or "asphalt_concrete" (omit key if unused)
+# Base stations
+num_sectors: 6                    # sectors per base station, evenly spread in azimuth
+mechanical_tilt: 10.0             # downtilt (degrees, positive = down)
+azimuth_offset: 0.0               # azimuth of the first sector (degrees)
+tx_power_dbm: 43.0                # per sector; used for the rss/sinr sampling metrics only
 
-# TX antenna array parameters
-tx_num_rows: 4  # Array dimensions (rows)
-tx_num_cols: 8  # Array dimensions (columns)
-tx_vertical_spacing: 0.5  # Element spacing in wavelengths (vertical)
-tx_horizontal_spacing: 0.5  # Element spacing in wavelengths (horizontal)
-tx_pattern: "tr38901"  # Radiation pattern: tr38901 (3GPP), dipole, iso, or hw_dipole
-tx_polarization: "V"  # Polarization: cross (±45°), V, H, or VH
+# Radio map (user sampling)
+radio_map_specular_reflection: true     # mirror-like reflections
+radio_map_diffuse_reflection: true      # scattering from rough surfaces (needs a scattering coefficient > 0)
+radio_map_refraction: true              # transmission through materials
+radio_map_diffraction: true             # diffraction on building edges (wedges)
+radio_map_edge_diffraction: true        # also on free-floating edges
+radio_map_diffraction_lit_region: false # also where the direct path is not blocked
+radio_map_max_depth: 5                  # maximum interactions per path
+radio_map_samples_per_tx: 1000000       # rays per sector
+radio_map_seed: 1
 
-# RX antenna array parameters
-rx_num_rows: 1  # Array dimensions (rows)
-rx_num_cols: 1  # Array dimensions (columns)
-rx_vertical_spacing: 0.5  # Element spacing in wavelengths (vertical)
-rx_horizontal_spacing: 0.5  # Element spacing in wavelengths (horizontal)
-rx_pattern: "iso"  # Radiation pattern: tr38901 (3GPP), dipole, iso, or hw_dipole
-rx_polarization: "V"  # Polarization: cross (±45°), V, H, or VH
+# User sampling
+num_user_samples_per_tx: 200      # users per sector (at most)
+user_sample_seed: 1
+user_sample_min_val_db: -150      # metric thresholds (dB; dBm for rss)
+user_sample_max_val_db: 100
+user_sample_min_dist: 0.0         # distance to the TX (m)
+user_sample_max_dist: 10000.0
+user_sample_metric: "path_gain"   # path_gain, rss or sinr
+tx_association: true              # only radio-map cells (mesh triangles) where this TX is the strongest
+sample_center_pos: true           # users at cell centres (else random in the triangle)
+scene_edge_epsilon: 1.0           # drop users this close to the edge of the sampled area (m; 0 = off)
 
-# Base station parameters
-num_sectors: 6  # Sectors per base station (azimuth angles computed automatically for uniform coverage)
-mechanical_tilt: 10.0  # Antenna downtilt angle (degrees)
-azimuth_offset: 0.0  # Global azimuth rotation (degrees)
-tx_power_dbm: 43.0  # Transmit power per array (dBm)
-
-# Radio map solver parameters
-radio_map_specular_reflection: true  # Mirror-like reflections
-radio_map_diffuse_reflection: true  # Scattering from rough surfaces
-radio_map_refraction: true  # Transmission through materials (Snell's law)
-radio_map_diffraction: true  # Signal bending around obstacles
-radio_map_edge_diffraction: true  # Diffraction at edges
-radio_map_diffraction_lit_region: false  # Diffraction in LoS regions
-radio_map_max_depth: 5  # Maximum ray-scene interactions per path
-radio_map_samples_per_tx: 1000000  # Number of samples per TX antenna array (10^6)
-radio_map_seed: 1  # Seed for radio map solver (reproducibility)
-
-# User sampling parameters
-num_user_samples_per_tx: 200  # Users sampled per TX array
-user_sample_seed: 1  # Random seed for reproducibility
-user_sample_min_val_db: -150  # Coverage thresholds (dB) - minimum
-user_sample_max_val_db: 100  # Coverage thresholds (dB) - maximum
-user_sample_min_dist: 0.0  # Distance constraints (meters) - minimum
-user_sample_max_dist: 10000.0  # Distance constraints (meters) - maximum
-user_sample_metric: "path_gain"  # Sampling metric: path_gain, rss, or sinr
-tx_association: true  # Associate users with strongest-signal TX
-sample_center_pos: true  # Sample from cell centers (deterministic) vs. randomly within cells
-scene_edge_epsilon: 1.0  # Minimum distance in meters from measurement surface edges to keep users (0.0 means no filtering)
-
-# Mobility preset
-mobility_preset: "vehicular"  # Select preset to use (must be a key in mobility_presets)
-
-# User equipment mobility presets
+# Mobility: mobility_preset names one of the presets below
+mobility_preset: "vehicular"
 mobility_presets:
-  stationary:
-    orientation_mode: "random"  # random or to_tx (pointing toward serving TX)
-    speed_distribution: null  # null (stationary), pedestrian (0.5--2 m/s), vehicular (8--30 m/s), or uniform_continuous with custom speed_min/speed_max
-  stationary_to_tx:
-    orientation_mode: "to_tx"  # random or to_tx (pointing toward serving TX)
-    speed_distribution: null  # null (stationary), pedestrian (0.5--2 m/s), vehicular (8--30 m/s), or uniform_continuous with custom speed_min/speed_max
-  pedestrian:
-    orientation_mode: "random"  # random or to_tx (pointing toward serving TX)
-    speed_distribution: "pedestrian"  # null (stationary), pedestrian (0.5--2 m/s), vehicular (8--30 m/s), or uniform_continuous with custom speed_min/speed_max
-    direction_mode: "random"  # Movement direction (random)
-  pedestrian_to_tx:
-    orientation_mode: "to_tx"  # random or to_tx (pointing toward serving TX)
-    speed_distribution: "pedestrian"  # null (stationary), pedestrian (0.5--2 m/s), vehicular (8--30 m/s), or uniform_continuous with custom speed_min/speed_max
-    direction_mode: "random"  # Movement direction (random)
-  vehicular:
-    orientation_mode: "random"  # random or to_tx (pointing toward serving TX)
-    speed_distribution: "vehicular"  # null (stationary), pedestrian (0.5--2 m/s), vehicular (8--30 m/s), or uniform_continuous with custom speed_min/speed_max
-    direction_mode: "random"  # Movement direction (random)
-  slow_walking:
-    orientation_mode: "random"  # random or to_tx (pointing toward serving TX)
-    speed_distribution: "uniform_continuous"  # null (stationary), pedestrian (0.5--2 m/s), vehicular (8--30 m/s), or uniform_continuous with custom speed_min/speed_max
-    speed_min: 0.5  # in m/s
-    speed_max: 1.5  # in m/s
-    direction_mode: "random"  # Movement direction (random)
-  fast_walking:
-    orientation_mode: "random"  # random or to_tx (pointing toward serving TX)
-    speed_distribution: "uniform_continuous"  # null (stationary), pedestrian (0.5--2 m/s), vehicular (8--30 m/s), or uniform_continuous with custom speed_min/speed_max
-    speed_min: 1.5  # in m/s
-    speed_max: 2.5  # in m/s
-    direction_mode: "random"  # Movement direction (random)
+  stationary:       {orientation_mode: "random"}
+  stationary_to_tx: {orientation_mode: "to_tx"}
+  pedestrian:       {orientation_mode: "random", speed_distribution: "pedestrian", direction_mode: "random"}
+  pedestrian_to_tx: {orientation_mode: "to_tx", speed_distribution: "pedestrian", direction_mode: "random"}
+  vehicular:        {orientation_mode: "random", speed_distribution: "vehicular", direction_mode: "random"}
+  slow_walking:     {orientation_mode: "random", speed_distribution: "uniform_continuous",
+                     speed_min: 0.5, speed_max: 1.5, direction_mode: "random"}
+  fast_walking:     {orientation_mode: "random", speed_distribution: "uniform_continuous",
+                     speed_min: 1.5, speed_max: 2.5, direction_mode: "random"}
 
-# Path solver parameters
-path_solver_max_depth: 5  # Maximum ray-scene interactions per path
-path_solver_max_num_paths_per_src: 10000000  # Maximum paths per source (10^7)
-path_solver_samples_per_src: 10000000  # Ray samples per source (10^7)
-path_solver_synthetic_array: true  # Use synthetic array approximation for efficiency
-path_solver_los_mode: true  # Include line-of-sight paths
-path_solver_specular_reflection: true  # Mirror-like reflections
-path_solver_diffuse_reflection: true  # Scattering from rough surfaces
-path_solver_refraction: true  # Transmission through materials (Snell's law)
-path_solver_diffraction: true  # Signal bending around obstacles
-path_solver_edge_diffraction: true  # Diffraction at edges
-path_solver_diffraction_lit_region: false  # Diffraction in LoS regions
-path_solver_seed: 1  # Random seed
-path_solver_per_tx_users_only: false  # Compute paths only for TX-associated users
-path_solver_rx_batch_size: 50  # Solve each TX's receivers in batches of this size (null = all at once)
-path_solver_spec_table_size: 400000000  # Sionna specular-chain hash table size per source (null = Sionna default)
+# Path solver (channels)
+path_solver_max_depth: 5                    # maximum interactions per path
+path_solver_max_num_paths_per_src: 10000000 # path buffer size per source
+path_solver_samples_per_src: 10000000       # rays per source
+path_solver_synthetic_array: true           # trace from array centres, add element phases
+path_solver_los_mode: true                  # line-of-sight paths
+path_solver_specular_reflection: true       # interaction toggles as for the radio map
+path_solver_diffuse_reflection: true
+path_solver_refraction: true
+path_solver_diffraction: true
+path_solver_edge_diffraction: true
+path_solver_diffraction_lit_region: false
+path_solver_seed: 1
+path_solver_per_tx_users_only: false  # true: each sector only its own users
+path_solver_rx_batch_size: 50         # optional; receivers per solve (null = all at once)
+path_solver_spec_table_size: 400000000  # optional; Sionna specular-chain table size (null = default)
 
-# OFDM parameters
-num_subcarriers: 32  # OFDM subcarrier count
-num_ofdm_symbols: 14  # Time-domain symbols
-subcarrier_spacing: 30000.0  # Spacing in Hz
+# OFDM and CFR
+num_subcarriers: 32
+num_ofdm_symbols: 14
+subcarrier_spacing: 30000.0       # Hz
+cfr_normalize_delays: false       # subtract the first delay of each channel
+cfr_normalize: false              # unit average energy per channel
+cfr_out_type: "numpy"             # used only without a synthetic array
 
-# Channel Frequency Response (CFR) parameters
-cfr_normalize_delays: false  # Normalize delays relative to first path
-cfr_normalize: false  # Normalize CFR magnitude
-cfr_out_type: "numpy"  # Output backend
+# Saved data (optional)
+save_paths: true                  # default: true with a synthetic array
+save_cfr: true                    # default: true
 \end{minted}
 
-\subsection{Configuration Reference}
-
-\subsubsection{Scene Configuration}
-\begin{itemize}
-  \item \texttt{scene\_xml\_path}: Path to the 3D scene XML file generated by \texttt{scenegen}.
-  \item \texttt{carrier\_frequency}: Carrier frequency in Hz.
-\end{itemize}
-
-\subsubsection{Scene Setup Parameters}
-\begin{itemize}
-  \item \texttt{scene\_center}: 2D coordinate $[x, y]$ specifying scene center in meters.
-  \item \texttt{antenna\_height\_offset}: Vertical offset of base station antennas above rooftops (meters).
-  \item \texttt{num\_deployment\_buildings}: Number of buildings for base station deployment.
-  \item \texttt{clip\_terrain\_to\_buildings}: Whether to clip terrain mesh to building boundaries.
-  \item \texttt{terrain\_clip\_margin}: Margin around buildings when clipping (meters).
-  \item \texttt{user\_shift\_from\_ground}: UE height above ground (meters).
-  \item \texttt{override\_ground\_material} (optional): ITU material type for the scene's \texttt{ground} object, \texttt{"concrete"} (1--100\,GHz) or \texttt{"asphalt\_concrete"} (1--40\,GHz). The material is created if the scene does not define it, and wet-ground materials are removed. Omit the key or leave it unset to keep the scene XML materials; the ITU ground materials of the scene XML (e.g. \texttt{wet\_ground}) are defined for 1--10\,GHz only.
-\end{itemize}
-
-\subsubsection{Antenna Array Parameters (TX and RX)}
-\begin{itemize}
-  \item \texttt{tx\_num\_rows}, \texttt{tx\_num\_cols} / \texttt{rx\_num\_rows}, \texttt{rx\_num\_cols}: Array dimensions.
-  \item \texttt{tx\_vertical\_spacing}, \texttt{tx\_horizontal\_spacing} / \texttt{rx\_vertical\_spacing}, \texttt{rx\_horizontal\_spacing}: Element spacing in carrier wavelengths.
-  \item \texttt{tx\_pattern}, \texttt{rx\_pattern}: Radiation pattern---\texttt{tr38901} (3GPP), \texttt{dipole}, \texttt{iso}, or \texttt{hw\_dipole}.
-  \item \texttt{tx\_polarization}, \texttt{rx\_polarization}: \texttt{cross} ($\pm 45^{\circ}$), \texttt{V}, \texttt{H}, or \texttt{VH}.
-\end{itemize}
-
-\subsubsection{Base Station Parameters}
-\begin{itemize}
-  \item \texttt{num\_sectors}: Sectors per base station (azimuth angles computed automatically for uniform coverage).
-  \item \texttt{mechanical\_tilt}: Antenna downtilt angle (degrees). Positive values tilt the boresight down.
-  \item \texttt{azimuth\_offset}: Global azimuth rotation (degrees).
-  \item \texttt{tx\_power\_dbm}: Transmit power per array (dBm).
-\end{itemize}
-
-\subsubsection{Ray Tracing Parameters (Radio Map and Path Solver)}
-\label{subsec:ray-tracing-radio-path}
-These control ray-scene interactions for both the radio map and the path solver. The same physical toggles appear twice in YAML: each boolean is prefixed \texttt{radio\_map\_} for \texttt{RadioMapSolver} and \texttt{path\_solver\_} for \texttt{PathSolver}, so the two stages can be configured independently (e.g., fewer interactions or samples for the map, more for detailed paths). See \href{https://arxiv.org/pdf/2504.21719}{Sionna RT: Technical Report} for interaction semantics.
-\begin{itemize}
-  \item \texttt{radio\_map\_max\_depth}, \texttt{path\_solver\_max\_depth}: Maximum ray-scene interactions per path.
-  \item \texttt{radio\_map\_samples\_per\_tx}: Number of samples per TX for radio map (e.g., $10^6$).
-  \item \texttt{radio\_map\_seed}: Seed for radio map solver (reproducibility).
-  \item \texttt{path\_solver\_max\_num\_paths\_per\_src}, \texttt{path\_solver\_samples\_per\_src}: Max paths and ray samples per source (e.g., $10^7$).
-  \item \texttt{radio\_map\_specular\_reflection}, \texttt{path\_solver\_specular\_reflection} (and \texttt{\ldots diffuse\_reflection}): Mirror-like and rough-surface scattering.
-  \item \texttt{radio\_map\_refraction}, \texttt{path\_solver\_refraction}: Transmission through materials (Snell's law).
-  \item \texttt{radio\_map\_diffraction}, \texttt{path\_solver\_diffraction}; \texttt{radio\_map\_edge\_diffraction}, \texttt{path\_solver\_edge\_diffraction}: Signal bending and edge diffraction.
-  \item \texttt{radio\_map\_diffraction\_lit\_region}, \texttt{path\_solver\_diffraction\_lit\_region}: Diffraction in LoS regions.
-\end{itemize}
-
-\subsubsection{User Sampling Parameters}
-\begin{itemize}
-  \item \texttt{num\_user\_samples\_per\_tx}: Maximum number of users sampled per TX array. Each user of a TX is placed in a different radio-map cell, so a TX with fewer valid cells gets fewer users, and a TX with no valid cell gets none. Each cell gets a random key from \texttt{user\_sample\_seed}, and a TX takes its valid cells with the lowest keys. The radio map is not bit-identical between GPU runs, so a few cells near the thresholds can change validity, and this way such a change moves at most one user.
-  \item \texttt{user\_sample\_seed}: Random seed for reproducibility.
-  \item \texttt{user\_sample\_min/max\_val\_db}: Coverage thresholds (dB).
-  \item \texttt{user\_sample\_min/max\_dist}: Distance constraints (meters).
-  \item \texttt{user\_sample\_metric}: Sampling metric---\texttt{path\_gain}, \texttt{rss}, or \texttt{sinr}.
-  \item \texttt{tx\_association}: If \texttt{true}, sampled positions are restricted to cells where the chosen metric is strongest for that transmitter; if \texttt{false}, a cell may be kept for one TX even if another TX would yield a higher metric at that location.
-  \item \texttt{sample\_center\_pos}: If \texttt{true}, positions lie on radio-map cell centers (grid); if \texttt{false}, positions are drawn at random within each cell surface.
-  \item \texttt{scene\_edge\_epsilon}: Minimum distance in meters from measurement surface outer edges to keep users. Users within this distance from any outer edge are filtered out. Set to 0.0 to disable filtering.
-\end{itemize}
-
-\subsubsection{Mobility Presets}
-The top-level key \texttt{mobility\_preset} must name one entry in the \texttt{mobility\_presets} mapping. Each preset specifies:
-\begin{itemize}
-  \item \texttt{orientation\_mode}: \texttt{random} or \texttt{to\_tx} (pointing toward serving TX).
-  \item \texttt{speed\_distribution}: \texttt{null} (stationary), \texttt{pedestrian} (0.5--2 m/s), \texttt{vehicular} (8--30 m/s), or \texttt{uniform\_continuous} with custom \texttt{speed\_min}/\texttt{speed\_max}.
-  \item \texttt{direction\_mode}: Movement direction (\texttt{random}), required when the preset uses a non-null speed distribution.
-\end{itemize}
-
-\subsubsection{Path Solver Parameters}
-Beyond the knobs listed here, path solving also uses \texttt{path\_solver\_max\_depth} and the \texttt{path\_solver\_*} interaction toggles (specular reflection, diffuse reflection, refraction, diffraction, edge diffraction, diffraction-lit region). Those mirror the \texttt{radio\_map\_*} keys so the solver and radio map can diverge independently; see~\S~\ref{subsec:ray-tracing-radio-path}.
-\begin{itemize}
-  \item \texttt{path\_solver\_max\_num\_paths\_per\_src}: Maximum paths per source.
-  \item \texttt{path\_solver\_samples\_per\_src}: Ray samples per source.
-  \item \texttt{path\_solver\_synthetic\_array}: Use synthetic array approximation for efficiency.
-  \item \texttt{path\_solver\_los\_mode}: Include line-of-sight paths.
-  \item \texttt{path\_solver\_seed}: Random seed.
-  \item \texttt{path\_solver\_per\_tx\_users\_only}: Compute paths only for TX-associated users.
-  \item \texttt{path\_solver\_rx\_batch\_size} (optional): Solve each TX's receivers (its own users or all users) in batches of this size. Sionna RT stores each new specular chain per receiver in a hash table of fixed size per source. When many receivers share one solve, the table fills up and new chains are discarded silently, so some NLoS paths are lost. Omit or set to \texttt{null} to solve all receivers at once.
-  \item \texttt{path\_solver\_spec\_table\_size} (optional): Minimum size of the specular-chain hash table per source (Sionna RT's internal \texttt{SBCandidateGenerator.MIN\_SPEC\_COUNT\_SIZE}; the table has $\max(\texttt{max\_num\_paths\_per\_src}, \textrm{this value})$ entries and takes 8 bytes per entry). Omit or set to \texttt{null} to keep the Sionna default. The table and the path buffer are indexed with 32-bit integers, so $\max(\texttt{max\_num\_paths\_per\_src}, \textrm{this value})$ times the number of sources must stay below $2^{32}$; the number of sources is 1 with a synthetic array and the number of TX antennas without, and the config validator rejects larger settings.
-\end{itemize}
-
-\subsubsection{OFDM and CFR Parameters}
-\begin{itemize}
-  \item \texttt{num\_subcarriers}: OFDM subcarrier count.
-  \item \texttt{num\_ofdm\_symbols}: Time-domain symbols.
-  \item \texttt{subcarrier\_spacing}: Spacing in Hz.
-  \item \texttt{cfr\_normalize\_delays}: Normalize delays relative to first path.
-  \item \texttt{cfr\_normalize}: Normalize CFR magnitude.
-  \item \texttt{cfr\_out\_type}: Output tensor backend token (YAML string). Allowed values mirror \texttt{src.config\_validator}: \texttt{numpy}, \texttt{tf} (TensorFlow), \texttt{torch}, \texttt{jax}, \texttt{drjit}.
-\end{itemize}
+\subsection{Reference}
+Only what the comments above do not say is listed here.
+\begin{description}
+  \item[Scene setup.] \key{num\_deployment\_buildings} is the number of base stations (Section~\ref{sec:pipeline}). \key{override\_ground\_material} (optional) assigns \texttt{concrete} (1--100\,GHz) or \texttt{asphalt\_concrete} (1--40\,GHz) to the \texttt{ground} object and removes the wet-ground materials; without it, the scene's materials are kept.
+  \item[Arrays.] All sectors share the TX array and all users the RX array (Sionna RT allows one of each per scene). \texttt{VH} and \texttt{cross} have two polarizations, so twice the elements. The antenna order is given in Section~\ref{sec:output}.
+  \item[Interaction toggles.] The \texttt{radio\_map\_*} and \texttt{path\_solver\_*} flags (reflection, refraction, diffraction, depth, samples, seed) are separate, so the radio map, which only places users, can be cheaper than the path solve. See the \href{https://arxiv.org/abs/2504.21719}{Sionna RT technical report} for their meaning. Diffuse reflection has no effect with the included scenes (Section~\ref{sec:materials}).
+  \item[User sampling.] \key{num\_user\_samples\_per\_tx} is a maximum: a sector with fewer valid cells gets fewer users, possibly none. The radio-map metric is per sector.
+  \item[Mobility.] \key{mobility\_preset} must be one of the seven preset names shown. \texttt{orientation\_mode}: \texttt{random} (yaw uniform, pitch within $\pm 30^\circ$, roll within $\pm 45^\circ$) or \texttt{to\_tx} (the array faces the user's sector). \texttt{speed\_distribution}: none (stationary), \texttt{pedestrian} (0.5--2\,m/s), \texttt{vehicular} (8--30\,m/s) or \texttt{uniform\_continuous} between \texttt{speed\_min} and \texttt{speed\_max}; the direction is uniform in the horizontal plane. Users do not move during a run; the velocity only sets the Doppler shifts.
+  \item[Path solver.] \key{path\_solver\_synthetic\_array: true} traces rays from the array centres only and adds the phase of each element analytically; it is much faster and required for the path data (Section~\ref{sec:paths}). \key{path\_solver\_per\_tx\_users\_only: false} solves every sector for all users of the scene, so each user appears in every sector's file. \key{path\_solver\_rx\_batch\_size} and \key{path\_solver\_spec\_table\_size} avoid silent path loss (Section~\ref{sec:pipeline}); keep the values of the example configs. The validator rejects settings whose table indices exceed Sionna's 32-bit range: $\max(\textrm{table size}, \texttt{max\_num\_paths\_per\_src})$ times the number of sources (1 with a synthetic array, else the number of TX antennas) must stay below $2^{32}$.
+  \item[CFR.] \key{cfr\_out\_type} (\texttt{numpy}, \texttt{tf}, \texttt{torch}, \texttt{jax} or \texttt{drjit}) applies only without a synthetic array, where Sionna computes the CFR; with batching it must be \texttt{numpy}.
+  \item[Saved data.] \key{save\_paths} requires a synthetic array. With \key{save\_cfr: false}, the files hold only the paths, from which \texttt{load\_cfr} rebuilds the CFR exactly. At least one of the two must be true.
+\end{description}
 
 \clearpage
-\section{Framework Architecture}
+\section{How a Run Works}
+\label{sec:pipeline}
+\texttt{scripts/run.py} calls \texttt{generate\_channels(config)} (\texttt{src.channel\_generator}), which runs these steps.
 
-The generation pipeline transforms a configuration file into channel frequency response (CFR) data through these sequential steps:
+\paragraph{1. Scene setup.} The scene is loaded at \key{carrier\_frequency}. With \key{clip\_terrain\_to\_buildings}, the ground is clipped to the bounding box of the buildings plus \key{terrain\_clip\_margin}, so that users are not placed in empty land around the city (Fig.~\ref{fig:scene_clip}). The clipped ground, raised by \key{user\_shift\_from\_ground}, is the measurement surface on which users are placed.
 
-\begin{enumerate}
-  \item \textbf{Scene Setup}: Load 3D geometry, extract building info, optionally clip terrain, determine antenna positions.
-  \item \textbf{Antenna Configuration}: Configure shared TX/RX array properties.
-  \item \textbf{Base Station Deployment}: Deploy multi-sector base stations with uniform azimuthal coverage.
-  \item \textbf{Radio Map Computation}: Generate coverage maps via ray tracing.
-  \item \textbf{User Sampling}: Sample UE positions based on coverage, distance, and association constraints.
-  \item \textbf{Edge Filtering}: Optionally filter users too close to measurement surface edges (if \texttt{scene\_edge\_epsilon} $> 0$).
-  \item \textbf{Receiver Creation}: Create receivers with mobility parameters.
-  \item \textbf{Path Solving}: Compute ray-traced paths per TX.
-  \item \textbf{CFR Computation}: Convert paths to frequency response arrays (one tensor per TX over all receivers considered for that TX).
-  \item \textbf{Valid-Path Filtering and LoS/NLOS Labels}: After CFR is built, path delays and Sionna interaction types are evaluated in a single pass (\texttt{\_compute\_rx\_valid\_and\_los\_masks}). Receivers without any path with strictly positive delay ($\tau > 0$) are invalid and dropped. For each remaining (valid) channel, a binary line-of-sight flag is set: \texttt{1} if at least one valid path is pure LoS (all ray--scene interactions along that path are \texttt{InteractionType.NONE}), and \texttt{0} if all valid paths involve at least one non-trivial interaction (NLoS). The saved CFR tensor, \texttt{rx\_positions}, and \texttt{rx\_names} are sliced to valid channels only. Per-TX metadata includes the transmit antenna position (\texttt{tx\_position}), receive positions for valid channels (\texttt{rx\_positions}), corresponding receiver names (\texttt{rx\_names}), \texttt{num\_valid\_channels}, \texttt{path\_buffer\_fill} (the largest fill of Sionna RT's per-source path buffer over the solves of the TX, as a fraction of \texttt{max\_num\_paths\_per\_src}; at 1 or above, paths were discarded, and a warning is logged), \texttt{users\_per\_tx} (the number of users sampled for each TX), \texttt{rx\_serving\_tx} (the TX each saved user was sampled for, aligned with the CFR user axis), and \texttt{los\_binary} (length equal to the number of valid channels, aligned with the CFR user axis). It also records \texttt{cfr\_axes}, the axes of the CFR tensor (\texttt{rx}, \texttt{rx\_ant}, \texttt{tx}, \texttt{tx\_ant}, \texttt{ofdm\_symbol}, \texttt{subcarrier}), and \texttt{tx\_array} and \texttt{rx\_array}, the layout of each array: rows, columns, polarizations, spacing, pattern and the antenna index order \texttt{p * num\_rows * num\_cols + c * num\_rows + r}, where \texttt{r} is the row counted from the top, \texttt{c} the column along the array's local $y$ axis and \texttt{p} the polarization. The vertical index therefore runs fastest.
-\end{enumerate}
+\paragraph{2. Base stations.} The \key{num\_deployment\_buildings} buildings with the highest centroids each get one base station, at the rooftop vertex closest to \key{scene\_center} (so that the building lies behind the antenna) and \key{antenna\_height\_offset} above the roof's highest point (Fig.~\ref{fig:antenna_placement}). Each base station has \key{num\_sectors} sectors at the same position, with azimuths $\key{azimuth\_offset} + 360^\circ (s-1)/N_s$ and the downtilt \key{mechanical\_tilt}; the orientation in Sionna's angles is $[\textrm{azimuth}, \textrm{tilt}, 0]$.
 
-\subsection{Key Design Choices}
+\paragraph{3. Radio map and user sampling.} A radio map over the measurement surface gives \key{user\_sample\_metric} per sector in every cell, a triangle of the surface mesh. A cell is valid for a sector if the metric lies within the thresholds, the cell centre lies within the distance limits and, with \key{tx\_association}, the sector is the strongest in the cell. Each sector takes up to \key{num\_user\_samples\_per\_tx} distinct valid cells (Fig.~\ref{fig:user_sampling} shows an example): every cell gets a random key from \key{user\_sample\_seed}, and the sector takes the valid cells with the lowest keys. The radio map is not bit-identical between GPU runs, and with this rule a cell that changes validity moves at most one user. Users are placed at the cell centres or, with \key{sample\_center\_pos: false}, at a random point of the cell.
 
-\subsubsection{Shared Antenna Arrays}
-Sionna RT enforces a single TX and RX antenna configuration per scene. All base stations share identical TX array properties; all UEs share identical RX properties.
+\paragraph{4. Edge filtering.} With \key{scene\_edge\_epsilon} $> 0$, users within that distance of the bounding box of all sampled users are removed (Fig.~\ref{fig:edge_user_filter}). These users tend to be LoS-dominated. The filter acts after sampling, so a sector can keep fewer users than requested.
 
-\subsubsection{Per-Transmitter Path Solving}
-Paths are solved separately per TX rather than simultaneously for all TX-RX pairs. This reduces complexity from $O(N \times M)$ to $O(M)$ per TX. With TX association enabled, each TX processes only its associated users, reducing computation to $O(\texttt{num\_users\_per\_tx})$ per TX. This enables scaling to scenarios infeasible with simultaneous solving.
+\paragraph{5. Receivers.} Each user becomes a receiver with the orientation and velocity of the mobility preset, drawn with \key{user\_sample\_seed}.
 
-\subsubsection{Antenna Placement}
-Base stations deploy on the highest buildings (sorted by rooftop height). For each building, the antenna is placed at the rooftop vertex closest to the scene center, minimizing self-shadowing by positioning the building mass behind the antenna relative to the primary coverage area.
+\paragraph{6. Path solving.} Each sector is solved alone, for its own users or for all users. Sionna RT stores each new chain of reflecting surfaces per receiver in a hash table of fixed size per source; when many receivers share one solve, the table fills up and new chains are discarded without a warning, so some NLoS paths can be lost (LoS paths are traced separately and are kept). CSIGen therefore solves the receivers in batches of \key{path\_solver\_rx\_batch\_size} with a larger table (\key{path\_solver\_spec\_table\_size}). It also records the largest fill of Sionna's path buffer (\texttt{path\_buffer\_fill}, as a fraction of \key{path\_solver\_max\_num\_paths\_per\_src}) and logs a warning when it reaches 1, that is, when candidate paths were discarded; there is no warning below that.
 
-\subsubsection{Measurement Surface}
-The framework creates a measurement surface by shifting the terrain mesh vertically by \texttt{user\_shift\_from\_ground}. If terrain clipping is enabled, it occurs before this shift.
+\paragraph{7. Valid channels and LoS labels.} A user without any path of positive delay has no channel to the sector and is dropped from its file. A kept channel is LoS (\texttt{los\_binary} = 1) if it has a path without any interaction.
 
-\subsubsection{Configuration Validation}
-All parameters are validated before generation, catching errors early with clear messages. Use \texttt{load\_validated\_config(path)} (from \texttt{src.config\_validator}) to load a YAML file into a dictionary suitable for the generator API.
+\paragraph{8. Paths and CFR.} With a synthetic array, the paths of every kept channel are collected (Section~\ref{sec:paths}), and the CFR is computed from them. Without one, Sionna's \texttt{Paths.cfr} computes the CFR and no paths are saved. The results are streamed: \texttt{generate\_channels} yields one item per sector, and \texttt{run.py} writes its file before the next sector is solved.
 
-\subsubsection{Python API and Saved Outputs}
-Channel generation is exposed as \texttt{generate\_channels(config)} in \texttt{src.channel\_generator}: it is a \emph{streaming} iterator that yields one dictionary per transmit sector index, in order, without holding all TX CFR tensors in memory at once. Each yielded item has keys \texttt{tx\_idx}, \texttt{tx\_name}, \texttt{h\_tx} (NumPy CFR for valid channels only), and \texttt{tx\_metadata} (positions, names, LoS flags, counts, embedded \texttt{config} copy, CFR shape/dtype, etc.).
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}{0.4\textwidth}\includegraphics[width=\textwidth]{figures/scene_1.png}\caption{Before clipping}\end{subfigure}
+  \hspace{1em}
+  \begin{subfigure}{0.4\textwidth}\includegraphics[width=\textwidth]{figures/scene_1_clipped.png}\caption{After clipping (15\,m margin)}\end{subfigure}
+  \caption{Terrain clipping.}
+  \label{fig:scene_clip}
+\end{figure}
 
-The helper \texttt{save\_channel\_data} (\texttt{src.channel}) writes a compressed \texttt{.npz} per TX containing array \texttt{h}, \texttt{shape}, \texttt{dtype}, and a nested \texttt{metadata} object. The script \texttt{scripts/run.py} loads a config, iterates \texttt{generate\_channels}, saves one file per TX under a timestamped output directory, and writes a run-level \texttt{metadata.yaml} summary (CSIGen version, scene name, timestamp, users per TX, per-TX CFR shapes/dtypes, CFR axes, array layouts, full config).
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}{0.4\textwidth}\includegraphics[width=\textwidth]{figures/antenna_placement.png}\caption{Four base stations (red)}\label{fig:antenna_placement}\end{subfigure}
+  \hspace{1em}
+  \begin{subfigure}{0.4\textwidth}\includegraphics[width=\textwidth]{figures/scene_1_user_sample.png}\caption{5 base stations $\times$ 3 sectors, 100 users per sector}\label{fig:user_sampling}\end{subfigure}
+  \caption{Base station placement and user sampling.}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}{0.4\textwidth}\includegraphics[width=\textwidth]{figures/no_edge_filter.png}\caption{\key{scene\_edge\_epsilon} = 0}\end{subfigure}
+  \hspace{1em}
+  \begin{subfigure}{0.4\textwidth}\includegraphics[width=\textwidth]{figures/edge_filter_15meters.png}\caption{\key{scene\_edge\_epsilon} = 15\,m}\end{subfigure}
+  \caption{Edge filtering, with 3 sectors, 2 base stations and 1000 users per sector.}
+  \label{fig:edge_user_filter}
+\end{figure}
+
+\clearpage
+\section{Output}
+\label{sec:output}
+\subsection{Files}
+\begin{itemize}
+  \item \texttt{channel\_tx\_<t>.npz}, one per sector $t$ (compressed): \texttt{h}, \texttt{shape} and \texttt{dtype} if the CFR is saved, the \texttt{paths\_*} arrays if the paths are saved (Section~\ref{sec:paths}), and \texttt{metadata}, a dictionary (load with \texttt{allow\_pickle=True} and \texttt{.item()}).
+  \item \texttt{metadata.yaml}: CSIGen version, scene name, timestamp, number of sectors and users, users per sector, CFR shape and dtype per sector, CFR axes, array layouts, and the full validated config.
+\end{itemize}
+
+\subsection{CFR}
+\texttt{h} is complex64 with axes \texttt{cfr\_axes} = (\texttt{rx}, \texttt{rx\_ant}, \texttt{tx}, \texttt{tx\_ant}, \texttt{ofdm\_symbol}, \texttt{subcarrier}): one row per kept user, a TX axis of size 1, and subcarriers ordered from the lowest to the highest frequency. The metadata \texttt{tx\_array} and \texttt{rx\_array} give each array's rows, columns, polarizations, spacing, pattern and antenna order: antenna $i = p\,R\,C + c\,R + r$ for row $r$ (from the top), column $c$ (along the array's local $y$ axis) and polarization $p$, with $R$ rows and $C$ columns. The vertical index therefore runs fastest; reshape an antenna axis to $[P, C, R]$ to get the array.
+
+\subsection{Per-Sector Metadata}
+Arrays marked ``per row'' are aligned with the rows of \texttt{h}.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+Key & Content \\
+\midrule
+\texttt{tx\_idx}, \texttt{tx\_name}, \texttt{tx\_position}, \texttt{tx\_orientation} & the sector; orientation in Sionna's angles $[\alpha, \beta, \gamma]$ (rotations about $z$, $y$, $x$) \\
+\texttt{rx\_names}, \texttt{rx\_positions} & per row: the user and its position ($[N, 3, 1]$) \\
+\texttt{rx\_velocities}, \texttt{rx\_orientations} & per row: velocity (m/s) and orientation, $[N, 3]$ \\
+\texttt{rx\_serving\_tx} & per row: the sector the user was sampled for \\
+\texttt{los\_binary} & per row: 1 if the channel has a LoS path \\
+\texttt{path\_stats}, \texttt{path\_stats\_fields} & per row: path statistics (Section~\ref{sec:stats}) and their description \\
+\texttt{num\_valid\_channels} & number of rows \\
+\texttt{num\_txs}, \texttt{num\_sectors}, \texttt{users\_per\_tx}, \texttt{total\_users} & the run: sectors, sectors per base station, users sampled per sector, all users \\
+\texttt{path\_buffer\_fill} & largest fill of Sionna's path buffer (at 1, paths were discarded) \\
+\texttt{cfr\_saved}, \texttt{cfr\_shape}, \texttt{cfr\_dtype}, \texttt{cfr\_axes} & the CFR, also when \texttt{h} is not saved \\
+\texttt{cfr\_params}, \texttt{cfr\_source} & what \texttt{load\_cfr} needs; how the CFR was computed \\
+\texttt{paths\_saved}, \texttt{path\_fields} & whether paths are saved; their description \\
+\texttt{tx\_array}, \texttt{rx\_array} & array layouts and antenna order \\
+\texttt{config} & the validated config \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Python API}
+\texttt{generate\_channels(config)} is an iterator with one dictionary per sector: \texttt{tx\_idx}, \texttt{tx\_name}, \texttt{h\_tx} (\texttt{None} with \key{save\_cfr: false}), \texttt{path\_data} (\texttt{None} without saved paths) and \texttt{tx\_metadata}. \texttt{save\_channel\_data} (\texttt{src.channel}) writes one item as a file.
+
+\clearpage
+\section{Path Data}
+\label{sec:paths}
+With a synthetic array, every path has one delay, Doppler shift and pair of directions for all antenna pairs, and CSIGen saves all valid paths of every channel. The paths of a file are stored in a flat layout: the paths of row $i$ are entries \texttt{paths\_offsets[i]} to \texttt{paths\_offsets[i+1]} $-\,1$ of the other arrays, sorted by power (the mean of $|a|^2$ over antenna pairs), strongest first. The metadata \texttt{path\_fields} describes each array.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Key & Shape and type & Content \\
+\midrule
+\texttt{paths\_offsets} & $[N+1]$ int64 & start of the paths of each row \\
+\texttt{paths\_a} & $[P, N_\mathrm{rx}, N_\mathrm{tx}]$ complex64 & coefficient per antenna pair \\
+\texttt{paths\_tau} & $[P]$ float32 & absolute delay (s) \\
+\texttt{paths\_doppler} & $[P]$ float32 & Doppler shift (Hz) \\
+\texttt{paths\_theta\_t}, \texttt{paths\_phi\_t} & $[P]$ float32 & zenith and azimuth of departure \\
+\texttt{paths\_theta\_r}, \texttt{paths\_phi\_r} & $[P]$ float32 & zenith and azimuth of arrival \\
+\texttt{paths\_interactions} & $[P, D]$ uint8 & interaction type per bounce \\
+\bottomrule
+\end{tabular}
+\end{center}
+$P$ is the number of paths of the file, $N_\mathrm{rx}$ and $N_\mathrm{tx}$ the numbers of antennas (in the order of the CFR) and $D$ = \key{path\_solver\_max\_depth}. The coefficients are passband, unitless and include the antenna patterns. Interaction codes: 0 none, 1 specular reflection, 2 diffuse reflection, 4 refraction, 8 diffraction; 0 also fills the bounces after the last, so a LoS path is all zeros. A path takes about $1/(N_\mathrm{sym} N_\mathrm{sc})$ of the size of its channel's CFR, so the paths of a channel with few paths (in our runs, medians of 3--11) take a few percent of the CFR; with thousands of paths, as from diffuse scattering, they exceed it.
+
+\subsection{CFR from the Paths}
+CSIGen computes the saved CFR from these arrays, in float64, with \texttt{cfr\_from\_paths} (\texttt{src.path\_data}), for every antenna pair:
+\[
+h(f, t) = \sum_{l} a_l \, e^{-j 2\pi (f_\mathrm{c} + f) \tau_l} \, e^{j 2\pi \nu_l t},
+\]
+with carrier frequency $f_\mathrm{c}$, subcarrier offsets $f$, time $t = n T$ of OFDM symbol $n$ (symbol duration $T = 1/\Delta f$ for subcarrier spacing $\Delta f$), delay $\tau_l$ and Doppler shift $\nu_l$. This is the formula of Sionna's \texttt{Paths.cfr}. \key{cfr\_normalize\_delays} first subtracts the earliest delay of each channel; \key{cfr\_normalize} scales each channel to unit average energy. The parameters are saved as \texttt{cfr\_params}.
+
+Sionna computes the carrier phase $2\pi f_\mathrm{c} \tau_l$ in float32, so the CSIGen CFR differs from Sionna's by about 1\% at 28\,GHz and 0.1\% at 3.5\,GHz. Neither is more accurate, because the delays themselves are float32; the float64 computation makes the CFR exactly reproducible from the saved paths.
+
+\subsection{Rebuilding and Modifying the CFR}
+\texttt{load\_cfr(file)} returns the file's \texttt{h} bit for bit. Its arguments change the CFR without new ray tracing:
+\begin{description}
+  \item[Numerology.] \texttt{num\_subcarriers}, \texttt{subcarrier\_spacing}, \texttt{num\_ofdm\_symbols}, \texttt{normalize\_delays}, \texttt{normalize}, and \texttt{symbol\_duration} $T$, for example $1.07/\Delta f$ for a 7\% cyclic prefix.
+  \item[Arrays.] \texttt{tx\_array} and \texttt{rx\_array} change \texttt{num\_rows}, \texttt{num\_cols}, \texttt{vertical\_spacing} or \texttt{horizontal\_spacing} (\texttt{retarget\_arrays}). With a synthetic array, the coefficient of an antenna pair is the centre coefficient times a plane-wave phase, $a_{l,mn} = a_l e^{j 2\pi (\mathbf{r}^\mathrm{rx}_m \cdot \hat{\mathbf{k}}^\mathrm{r}_l + \mathbf{r}^\mathrm{tx}_n \cdot \hat{\mathbf{k}}^\mathrm{t}_l)/\lambda}$, with element positions $\mathbf{r}$ rotated by \texttt{tx\_orientation} and \texttt{rx\_orientations} and the directions $\hat{\mathbf{k}}$ of departure and arrival. The centre coefficient is recovered from \texttt{paths\_a} and the phases of the new arrays applied. The element pattern, polarization and orientation cannot change, since the coefficients include them.
+  \item[Velocities.] \texttt{rx\_velocities}, one velocity for all users (3 values) or one per row ($[N, 3]$), in m/s (\texttt{retarget\_velocities}). The scene and the sectors are static, so $\nu_l = \mathbf{v}^\mathrm{rx} \cdot \hat{\mathbf{k}}^\mathrm{r}_l / \lambda$, and the Doppler shifts are updated with the change of velocity. The users do not move, so this holds within a frame, not over distances in which the paths change.
+  \item[Paths.] (\texttt{select\_paths}) \texttt{exclude\_interactions} drops paths with an interaction of the given types (\texttt{specular}, \texttt{diffuse}, \texttt{refraction}, \texttt{diffraction}); \texttt{max\_bounces} drops paths with more interactions (0 keeps the LoS path only); \texttt{power\_range\_db} drops paths more than this many dB below the strongest path of the channel; \texttt{max\_paths} then keeps the strongest remaining paths. A channel left without paths has a zero CFR; the normalizations apply to the remaining paths.
+\end{description}
+The array and velocity changes match new Sionna solves with the new settings to about $10^{-6}$ whenever the solves find the same paths.
+\begin{minted}{python}
+from src.path_data import load_cfr
+f = "output/la_1/<run_id>/channel_tx_0.npz"
+h = load_cfr(f)                                        # the saved h
+h_64 = load_cfr(f, num_subcarriers=64)                 # 64 subcarriers
+h_8x8 = load_cfr(f, tx_array=dict(num_rows=8, num_cols=8))
+h_v = load_cfr(f, rx_velocities=[20.0, 0.0, 0.0])      # all users at 20 m/s along x
+h_los = load_cfr(f, max_bounces=0)                     # LoS path only
+\end{minted}
+
+\subsection{Path Statistics}
+\label{sec:stats}
+The metadata \texttt{path\_stats} holds per-row arrays computed from all paths, also when the paths are not saved (only with a synthetic array). Spreads are power-weighted RMS values, azimuth spreads around the circular mean; angles are in the global frame.
+\begin{itemize}
+  \item \texttt{num\_paths}, \texttt{path\_gain\_db} (total power gain), \texttt{distance\_m} (3D TX--user distance);
+  \item \texttt{first\_delay\_s}, \texttt{mean\_delay\_s}, \texttt{delay\_spread\_s};
+  \item \texttt{k\_factor\_db}: LoS power over the power of all other paths (NaN without a LoS path, $+\infty$ with the LoS path only);
+  \item \texttt{asd\_rad}, \texttt{zsd\_rad}: azimuth and zenith spreads of departure, at the sector (from \texttt{paths\_phi\_t}, \texttt{paths\_theta\_t}); \texttt{asa\_rad}, \texttt{zsa\_rad}: the same for arrival, at the user (from \texttt{paths\_phi\_r}, \texttt{paths\_theta\_r});
+  \item the strongest path: \texttt{dominant\_power\_fraction}, \texttt{dominant\_tau\_s}, \texttt{dominant\_theta\_t}, \texttt{dominant\_phi\_t}, \texttt{dominant\_theta\_r}, \texttt{dominant\_phi\_r}, \texttt{dominant\_doppler\_hz}, \texttt{dominant\_num\_bounces};
+  \item \texttt{max\_abs\_doppler\_hz}, \texttt{max\_num\_bounces};
+  \item \texttt{power\_frac\_los}, \texttt{power\_frac\_specular}, \texttt{power\_frac\_diffuse}, \texttt{power\_frac\_refraction}, \texttt{power\_frac\_diffraction}: share of the power in the LoS path and in the paths with at least one interaction of each type (a path with two types counts for both).
+\end{itemize}
 
 \clearpage
 \section{Train/Test Splits}
 \label{sec:splits}
-
-A run stores one file per TX, and each row of a file is the channel between that TX and one user. In the all-users mode (\texttt{path\_solver\_per\_tx\_users\_only: false}), each user therefore appears in the file of every TX. The script \texttt{scripts/split\_dataset.py} splits a run into a train run and a test run by assigning every channel to train, to test or to neither, so that train and test share no users, no TXs, or neither, depending on the method:
-
+Each row of a file is the channel between one sector and one user, and with \key{path\_solver\_per\_tx\_users\_only: false} each user appears in every sector's file. \texttt{scripts/split\_dataset.py} assigns every channel to train, to test or to neither, so that train and test share no users, no sectors, or neither:
 \begin{minted}{bash}
-python scripts/split_dataset.py --run output/<scene_name>/<run_id> \
-    --out <out_dir> --by bs --test-ratio 0.2 --seed 1
+python scripts/split_dataset.py --run output/<scene_name>/<run_id> --out <out_dir> --by bs --test-ratio 0.2 --seed 1
 \end{minted}
 
 \subsection{Methods}
-\begin{itemize}
-  \item \texttt{users}: A random \texttt{test\_ratio} of the user positions is test. All channels of a user are on the same side, so train and test share no users, but train users can lie next to test users.
-  \item \texttt{area}: The bounding box of the user positions is tiled with square blocks of \texttt{--block-size} meters (default 50). Blocks are taken in random order and assigned to test until they hold at least \texttt{test\_ratio} of the users, so the test share can exceed the ratio by up to one block (and all blocks but one stay train at most). With \texttt{--guard} $g > 0$, train users within $g$ meters (horizontal distance) of a test user are dropped, so the test users lie in areas without training users.
-  \item \texttt{sector}: A random \texttt{test\_ratio} of the sectors (TXs), or the sectors given with \texttt{--test-ids}, is test. All channels of a sector are on the same side. The users appear on both sides, with different sectors. A test sector usually has train sectors on the same base station, which share its position and see the same paths with another antenna orientation, so test results on a \texttt{sector} split are more optimistic than on a \texttt{bs} split.
-  \item \texttt{bs}: As \texttt{sector}, for base stations with all their sectors. Base station $b$ holds the TXs $b N_s$ to $(b+1) N_s - 1$, where $N_s$ is \texttt{num\_sectors}.
-  \item \texttt{sector+users}, \texttt{sector+area}, \texttt{bs+users}, \texttt{bs+area}: A TX split and a user split, each with \texttt{test\_ratio}. A channel is train if both its TX and its user are train, test if both are test, and is dropped otherwise, so train and test share neither users nor TXs. In the all-users mode, test therefore keeps about $r^2$ of the channels and train about $(1-r)^2$ for \texttt{test\_ratio} $r$; choose a larger ratio for a usable test set.
-\end{itemize}
-With \texttt{--disjoint-users}, a \texttt{sector} or \texttt{bs} split also gives each user the side of the TX it was sampled for (\texttt{rx\_serving\_tx}) and drops the channels between a user and a TX of the other side. For \texttt{users}, \texttt{sector} and \texttt{bs}, the number of test items is the rounded \texttt{test\_ratio} times the number of user positions, sectors or base stations, at least one and at most all but one; sectors and base stations without channels are not drawn. Users at the same position, which runs before CSIGen 0.3.0 can contain, are always kept on the same side: a \texttt{users} split draws positions rather than users, and in the other methods users at the same position that end up on different sides are dropped. All random choices use \texttt{--seed}, so the same command gives the same split.
+\begin{description}
+  \item[\texttt{users}.] A random \texttt{--test-ratio} of the user positions is test, with all their channels. Train users can lie next to test users.
+  \item[\texttt{area}.] The bounding box of the users is tiled with squares of \texttt{--block-size} meters (default 50), and random blocks are test until they hold at least the test ratio of the users (all but one block at most). With \texttt{--guard} $g$, train users within $g$ meters (horizontally) of a test user are dropped.
+  \item[\texttt{sector}.] A random test ratio of the sectors, or those given with \texttt{--test-ids}, is test. Users appear on both sides. A test sector usually has train sectors on the same base station, which see the same paths with another orientation, so results are more optimistic than with \texttt{bs}.
+  \item[\texttt{bs}.] As \texttt{sector}, for base stations with all their sectors (base station $b$ holds sectors $b N_s$ to $(b+1) N_s - 1$).
+  \item[\texttt{sector+users}, \texttt{sector+area}, \texttt{bs+users}, \texttt{bs+area}.] A sector or base-station split and a user split, each with the test ratio $r$. A channel is train if its sector and user are both train, test if both are test, and dropped otherwise, so train and test share neither. With all users in every file, test keeps about $r^2$ of the channels and train $(1-r)^2$; use a larger ratio.
+\end{description}
+\texttt{--disjoint-users} makes a \texttt{sector} or \texttt{bs} split give each user the side of the sector it was sampled for (\texttt{rx\_serving\_tx}) and drop its channels to the other side. For \texttt{users}, \texttt{sector} and \texttt{bs}, the number of test items is the rounded ratio times the number of positions, sectors or base stations, at least one and at most all but one; sectors without channels are not drawn. Users at the same position, which runs before CSIGen 0.3.0 can contain, stay on one side. \texttt{--seed} fixes all random choices.
 
 \subsection{Output}
-The output directory gets \texttt{train/} and \texttt{test/}, each a run in the usual format. Every TX file is written on both sides, restricted to the channels of that side, possibly none. The per-row metadata (\texttt{rx\_names}, \texttt{rx\_positions}, \texttt{los\_binary}, \texttt{rx\_serving\_tx}) is restricted in the same way, \texttt{source\_rows} holds the row index of each kept channel in the source file, and \texttt{split\_side} names the side. Each side also gets a \texttt{split.yaml} with:
-\begin{itemize}
-  \item the method, a description of what it holds out, and all parameters, including the seed;
-  \item the test sectors, base stations or blocks that were chosen (blocks as indices $[i, j]$ of the tiling that starts at \texttt{block\_origin}), the number of users dropped by the guard, and the number of users dropped because they share a position with a user on the other side;
-  \item the source run (directory, scene, timestamp and CSIGen version) and the CSIGen version, git commit (with \texttt{-dirty} for uncommitted changes), command and time of the split;
-  \item the number of channels and users on each side, the number of dropped channels, the number of users on both sides, and the number of channels of each TX on each side.
-\end{itemize}
-The user counts of the source run do not hold for a split run, so \texttt{users\_per\_tx} and \texttt{total\_users} are renamed to \texttt{source\_users\_per\_tx} and \texttt{source\_total\_users}, and \texttt{metadata.yaml} gets \texttt{num\_users}, the number of users of the side. Runs made before CSIGen 0.3.0 have no \texttt{rx\_serving\_tx}; the script derives the serving TX from the user numbering.
+\texttt{<out\_dir>/train/} and \texttt{<out\_dir>/test/} are runs in the usual format. Every sector file is written on both sides, restricted to that side's rows (possibly none), together with its per-row metadata, path statistics and paths; \texttt{source\_rows} gives each row's index in the source file and \texttt{split\_side} the side. \texttt{users\_per\_tx} and \texttt{total\_users} are renamed to \texttt{source\_users\_per\_tx} and \texttt{source\_total\_users}, and \texttt{metadata.yaml} gets \texttt{num\_users}. Each side's \texttt{split.yaml} records the method and all parameters, the chosen sectors, base stations or blocks (as indices $[i, j]$ from \texttt{block\_origin}), the users dropped by the guard or for a shared position, the source run, the CSIGen version, git commit, command and time of the split, and the channel and user counts per side and per sector.
 
 \clearpage
-\section{Sample Flow}
-
-\subsection{Scene Setup and Antenna Deployment}
-
-To avoid sampling users outside the urban area, terrain can be clipped at scene edges (Fig.~\ref{fig:scene_clip}). The highest \texttt{num\_deployment\_buildings} are selected for base station deployment (Fig.~\ref{fig:antenna_placement}).
+\section{Examples}
+The figures of this section come from \texttt{config/examples/eval/la\_config\_test.yaml} (Los Angeles, 28\,GHz, all users in every sector's file; 20{,}310 channels, 33\% LoS) and are made by \texttt{docs/figures/make\_example\_figures.py} from the run. Fig.~\ref{fig:example_stats} shows the path statistics of all channels: most channels have a few paths (median 4). Fig.~\ref{fig:example_cfr} shows the CFR of one NLoS channel with 6 paths and a user at 29\,m/s: the strongest paths arrive from opposite directions with Doppler shifts of about $+1.7$ and $-1.9$\,kHz, so the channel fades over the 14 symbols.
 
 \begin{figure}[htbp]
   \centering
-  \begin{subfigure}{0.45\textwidth}
-    \centering
-    \includegraphics[width=\textwidth]{figures/scene_1.png}
-    \caption{Before clipping}
-  \end{subfigure}
-  \hfill
-  \begin{subfigure}{0.45\textwidth}
-    \centering
-    \includegraphics[width=\textwidth]{figures/scene_1_clipped.png}
-    \caption{After clipping (15\,m margin)}
-  \end{subfigure}
-  \caption{Effect of Terrain Clipping}
-  \label{fig:scene_clip}
+  \includegraphics[width=\linewidth]{figures/example_path_stats.png}
+  \caption{Path statistics of the example run: paths per channel, and CDFs of the delay spread and of the azimuth spreads of departure (ASD) and arrival (ASA), for LoS and NLoS channels.}
+  \label{fig:example_stats}
 \end{figure}
 
-\begin{figure}
+\begin{figure}[htbp]
   \centering
-  \includegraphics[width=0.5\linewidth]{figures/antenna_placement.png}
-  \caption{Base station deployment with \texttt{num\_deployment\_buildings=4} (red dots)}
-  \label{fig:antenna_placement}
-\end{figure}
-
-\subsection{Base Station Configuration}
-
-Each base station is deployed with \texttt{num\_sectors} sectors at automatically computed azimuth angles for uniform coverage (e.g., 0°, 120°, 240° for 3 sectors). Sectors share position but differ in orientation.
-
-\subsection{Radio Map and User Sampling}
-
-The radio map computes signal strength across the measurement surface using shooting-and-bouncing-rays (SBR). User positions are sampled based on:
-\begin{itemize}
-  \item Coverage thresholds (min/max signal strength)
-  \item Distance constraints (min/max from TX)
-  \item TX association (optional strongest-signal pairing)
-  \item Sampling mode (cell centers or random within cells)
-\end{itemize}
-
-See Fig.~\ref{fig:user_sampling} for an example with 5 base stations, 3 sectors each, and 100 users per TX.
-
-\begin{figure}
-  \centering
-  \includegraphics[width=0.5\linewidth]{figures/scene_1_user_sample.png}
-  \caption{User sampling: 5 BSs $\times$ 3 sectors, 100 users/TX (colored points)}
-  \label{fig:user_sampling}
-\end{figure}
-
-\subsection{Receiver Creation and Mobility}
-
-Receivers are created with mobility parameters from the selected preset. Orientation can be random or toward the serving TX. Velocity is sampled from the specified distribution with random direction.
-
-\subsection{Edge Filtering}
-
-After user sampling, positions can be filtered to remove users too close to the measurement surface outer edges. This is controlled by the \texttt{scene\_edge\_epsilon} parameter. The effect of this parameter is visualized in Fig.~\ref{fig:edge_user_filter}. Users at the far edges of the clipped measurement surface tend to be LoS-dominated, so this is a heuristic to remove them. Note that edge filtering is applied as a filter-out mechanism after user sampling. Therefore, it may change the number of effective users drastically especially if this parameter has a large value. Each TX keeps its own remaining users, so the number of users per TX can differ.  
-
-
-\begin{figure}[h]
-  \centering
-  \begin{subfigure}{0.45\textwidth}
-    \centering
-    \includegraphics[width=\textwidth]{figures/no_edge_filter.png}
-    \caption{\texttt{scene\_edge\_epsilon=0}}
-  \end{subfigure}
-  \hfill
-  \begin{subfigure}{0.45\textwidth}
-    \centering
-    \includegraphics[width=\textwidth]{figures/edge_filter_15meters.png}
-    \caption{\texttt{scene\_edge\_epsilon=15} meters}
-  \end{subfigure}
-  \caption{Filtering out users close to outer edges of the scene. Here \texttt{num\_sectors = 3}, \texttt{num\_deployment\_buildings = 2}, and \texttt{num\_user\_samples\_per\_tx = 1000}}
-  \label{fig:edge_user_filter}
-\end{figure}
-
-\subsection{Valid-Path Filtering and LoS/NLOS Labels}
-
-After path solving and CFR computation, the pipeline evaluates validity and LoS/NLOS jointly from the \texttt{Paths} object: path delays ($\tau > 0$) and per-path interaction records (Sionna \texttt{interactions}) determine which receivers have any valid path and whether a valid channel has at least one pure LoS path (no reflections, diffraction, etc.). Receivers with no valid paths are dropped; CFR arrays and aligned metadata (\texttt{rx\_positions}, \texttt{rx\_names}) are restricted to the valid subset. Per-TX metadata also stores the serving sector antenna position as \texttt{tx\_position}. The field \texttt{num\_valid\_channels} gives the count of valid channels, and \texttt{los\_binary} is a length-\texttt{num\_valid\_channels} array with \texttt{1} for LoS and \texttt{0} for NLoS, in the same order as rows of the filtered CFR. We include a histogram of number of paths from a TX to all sampled users displayed in Fig.~\ref{fig:num_paths}.
-
-\begin{figure}[h]
-  \centering
-  \begin{subfigure}{0.49\textwidth}
-    \centering
-    \includegraphics[width=\textwidth]{figures/boston_path_histogram_a.png}
-    \caption{The TX antenna (red) and sampled users (brown) in Boston}
-  \end{subfigure}
-  \hfill
-  \begin{subfigure}{0.49\textwidth}
-    \centering
-    \includegraphics[width=\textwidth]{figures/boston_path_hist_b.png}
-    \caption{Histogram of valid paths}
-  \end{subfigure}
-  \caption{Distribution of number of paths after removing invalid users}
-  \label{fig:num_paths}
-\end{figure}
-
-\subsection{Channel Frequency Response}
-After the paths are computed from a TX to a set of RXs, the channel frequency response can be derived from the path gains and delays. For \texttt{mobility\_preset="vehicular"}, \texttt{num\_subcarriers=32}, \texttt{tx\_num\_rows=1}, \texttt{tx\_num\_cols=32}, \texttt{rx\_num\_rows=1}, \texttt{rx\_num\_cols=1}, \texttt{num\_ofdm\_symbols=14}, and \texttt{subcarrier\_spacing=30}\,KHz, we include the time-frequency response for a fixed TX antenna index in Fig.~\ref{fig:cfr} and TX antenna-frequency response for a fixed OFDM symbol in Fig.~\ref{fig:afr}.
-
-\begin{figure}
-    \centering
-    \includegraphics[width=0.9\linewidth]{figures/cfr.png}
-    \caption{Time-frequency response (magnitude on the left, phase on the right)}
-    \label{fig:cfr}
-\end{figure}
-
-\begin{figure}
-    \centering
-    \includegraphics[width=0.9\linewidth]{figures/boston_afr.png}
-    \caption{TX antenna-frequency response (magnitude on the left, phase on the right)}
-    \label{fig:afr}
-\end{figure}
-
-\subsection{Performance Optimizations}
-
-\begin{itemize}
-  \item \textbf{Synthetic Array}: Treats array as continuous aperture for faster computation.
-  \item \textbf{Per-TX Solving}: Reduces complexity; enables large-scale generation.
-  \item \textbf{TX Association Filtering}: Processes only associated users per TX.
-  \item \textbf{Radio Map Pre-filtering}: Uses fewer samples (e.g., $10^6$) than detailed path solving (e.g., $10^7$) for efficient coverage estimation.
-\end{itemize}
-
-\clearpage
-\section{Available Scenes}
-
-We generated a number of scenes using \texttt{scenegen} tool. These scenes are included here.
-
-\subsection{Boston Downtown}
-
-\begin{figure}[h]
-    \centering
-    \includegraphics[width=0.5\linewidth]{figures/boston_1_cm.png}
-    \caption{\texttt{boston\_1} scene}
-\end{figure}
-
-\subsection{Chicago Downtown}
-
-\begin{figure}[h]
-    \centering
-    \includegraphics[width=0.5\linewidth]{figures/chicago_1_cm.png}
-    \caption{\texttt{chicago\_1} scene}
+  \includegraphics[width=\linewidth]{figures/example_cfr.png}
+  \caption{CFR magnitude of one NLoS channel, over TX antennas and subcarriers in the first OFDM symbol (left) and over symbols and subcarriers for the first TX antenna (right).}
+  \label{fig:example_cfr}
 \end{figure}
 
 \clearpage
-
-\subsection{New York City Manhattan}
-
-\begin{figure}[h]
-    \centering
-    \includegraphics[width=0.5\linewidth]{figures/nyc_1_cm.png}
-    \caption{\texttt{nyc\_1} scene}
-\end{figure}
-
-\subsection{San Francisco Downtown}
-
-\begin{figure}[h]
-    \centering
-    \includegraphics[width=0.5\linewidth]{figures/sf_1_cm.png}
-    \caption{\texttt{sf\_1} scene}
-\end{figure}
-
-\subsection{Los Angeles Downtown}
-
-\begin{figure}[h]
-    \centering
-    \includegraphics[width=0.5\linewidth]{figures/la_1_cm.png}
-    \caption{\texttt{la\_1} scene}
-\end{figure}
+\section{Reproducibility and Limitations}
+\begin{itemize}
+  \item \textbf{Determinism.} Sionna's GPU ray tracing is not bit-identical between runs: two runs of the same config can differ by up to about 1\% per channel, occasionally more when a path is found in one run and not the other, and a few radio-map cells near the thresholds can change validity. Each file records the config and the CSIGen version.
+  \item \textbf{Precision.} Delays and angles are float32 (Section~\ref{sec:paths}).
+  \item \textbf{Memory.} Without a synthetic array, every TX antenna is a separate source, which can exceed a 12\,GB GPU after a few sectors; the synthetic array avoids this.
+  \item \textbf{Static scene.} Users have velocities but do not move; each channel is one snapshot of \key{num\_ofdm\_symbols} symbols.
+  \item \textbf{Diffuse scattering.} The included scenes have no diffuse paths (Section~\ref{sec:materials}).
+\end{itemize}
 
 \end{document}
