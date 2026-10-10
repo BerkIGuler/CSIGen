@@ -14,7 +14,7 @@
 
 \title{CSIGen Documentation}
 \author{Berkay Guler}
-\date{Version 0.3.3 \\ Last Updated: October 10th, 2026}
+\date{Version 0.3.4 \\ Last Updated: October 10th, 2026}
 
 \begin{document}
 \sloppy
@@ -117,7 +117,7 @@ tx_power_dbm: 43.0                # per sector; used for the rss/sinr sampling m
 
 # Radio map (user sampling)
 radio_map_specular_reflection: true     # mirror-like reflections
-radio_map_diffuse_reflection: true      # scattering from rough surfaces (needs a scattering coefficient > 0)
+radio_map_diffuse_reflection: false     # scattering from rough surfaces (needs a scattering coefficient > 0)
 radio_map_refraction: true              # transmission through materials
 radio_map_diffraction: true             # diffraction on building edges (wedges)
 radio_map_edge_diffraction: true        # also on free-floating edges
@@ -158,15 +158,15 @@ path_solver_samples_per_src: 10000000       # rays per source
 path_solver_synthetic_array: true           # trace from array centres, add element phases
 path_solver_los_mode: true                  # line-of-sight paths
 path_solver_specular_reflection: true       # interaction toggles as for the radio map
-path_solver_diffuse_reflection: true
+path_solver_diffuse_reflection: false
 path_solver_refraction: true
 path_solver_diffraction: true
 path_solver_edge_diffraction: true
 path_solver_diffraction_lit_region: false
 path_solver_seed: 1
 path_solver_per_tx_users_only: false  # true: each sector only its own users
-path_solver_rx_batch_size: 50         # optional; receivers per solve (null = all at once)
-path_solver_spec_table_size: 400000000  # optional; Sionna specular-chain table size (null = default)
+path_solver_rx_batch_size: 50         # optional (default 50); receivers per solve (null = all at once)
+path_solver_spec_table_size: 400000000  # optional (default 4e8 with a synthetic array); Sionna's table size (null = Sionna default)
 
 # OFDM and CFR
 num_subcarriers: 32
@@ -189,7 +189,7 @@ Only what the comments above do not say is listed here.
   \item[Interaction toggles.] The \texttt{radio\_map\_*} and \texttt{path\_solver\_*} flags (reflection, refraction, diffraction, depth, samples, seed) are separate, so the radio map, which only places users, can be cheaper than the path solve. See the \href{https://arxiv.org/abs/2504.21719}{Sionna RT technical report} for their meaning. Diffuse reflection has no effect with the included scenes (Section~\ref{sec:materials}).
   \item[User sampling.] \key{num\_user\_samples\_per\_tx} is a maximum: a sector with fewer valid cells gets fewer users, possibly none. The radio-map metric is per sector.
   \item[Mobility.] \key{mobility\_preset} must be one of the seven preset names shown. \texttt{orientation\_mode}: \texttt{random} (yaw uniform, pitch within $\pm 30^\circ$, roll within $\pm 45^\circ$) or \texttt{to\_tx} (the array faces the user's sector). \texttt{speed\_distribution}: none (stationary), \texttt{pedestrian} (0.5--2\,m/s), \texttt{vehicular} (8--30\,m/s) or \texttt{uniform\_continuous} between \texttt{speed\_min} and \texttt{speed\_max}; the direction is uniform in the horizontal plane. Users do not move during a run; the velocity only sets the Doppler shifts.
-  \item[Path solver.] \key{path\_solver\_synthetic\_array: true} traces rays from the array centres only and adds the phase of each element analytically; it is much faster and required for the path data (Section~\ref{sec:paths}). \key{path\_solver\_per\_tx\_users\_only: false} solves every sector for all users of the scene, so each user appears in every sector's file. \key{path\_solver\_rx\_batch\_size} and \key{path\_solver\_spec\_table\_size} avoid silent path loss (Section~\ref{sec:pipeline}); keep the values of the example configs. The validator rejects settings whose table indices exceed Sionna's 32-bit range: $\max(\textrm{table size}, \texttt{max\_num\_paths\_per\_src})$ times the number of sources (1 with a synthetic array, else the number of TX antennas) must stay below $2^{32}$.
+  \item[Path solver.] \key{path\_solver\_synthetic\_array: true} traces rays from the array centres only and adds the phase of each element analytically; it is much faster and required for the path data (Section~\ref{sec:paths}). \key{path\_solver\_per\_tx\_users\_only: false} solves every sector for all users of the scene, so each user appears in every sector's file. \key{path\_solver\_rx\_batch\_size} and \key{path\_solver\_spec\_table\_size} avoid silent path loss (Section~\ref{sec:pipeline}); their defaults are 50 and $4 \cdot 10^8$. Without a synthetic array, the table keeps Sionna's default ($10^6$), since every TX antenna is a source; batching then needs \key{cfr\_out\_type: numpy}, so with another output type the receivers are solved at once, with a warning. The validator rejects settings whose table indices exceed Sionna's 32-bit range: $\max(\textrm{table size}, \texttt{max\_num\_paths\_per\_src})$ times the number of sources (1 with a synthetic array, else the number of TX antennas) must stay below $2^{32}$.
   \item[CFR.] \key{cfr\_out\_type} (\texttt{numpy}, \texttt{tf}, \texttt{torch}, \texttt{jax} or \texttt{drjit}) applies only without a synthetic array, where Sionna computes the CFR; with batching it must be \texttt{numpy}.
   \item[Saved data.] \key{save\_paths} requires a synthetic array. With \key{save\_cfr: false}, the files hold only the paths, from which \texttt{load\_cfr} rebuilds the CFR exactly. At least one of the two must be true.
 \end{description}
