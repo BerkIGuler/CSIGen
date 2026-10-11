@@ -35,7 +35,7 @@ tx_power_dbm: 43.0  # Transmit power per array (dBm)
 
 # Radio map solver parameters
 radio_map_specular_reflection: true  # Mirror-like reflections
-radio_map_diffuse_reflection: true  # Scattering from rough surfaces
+radio_map_diffuse_reflection: false  # Scattering from rough surfaces; needs material scattering coefficients > 0 (the included scenes have 0)
 radio_map_refraction: true  # Transmission through materials (Snell's law)
 radio_map_diffraction: true  # Signal bending around obstacles
 radio_map_edge_diffraction: true  # Diffraction at edges
@@ -106,15 +106,15 @@ path_solver_samples_per_src: 10000000  # Ray samples per source (10^7)
 path_solver_synthetic_array: true  # Use synthetic array approximation for efficiency
 path_solver_los_mode: true  # Include line-of-sight paths
 path_solver_specular_reflection: true  # Mirror-like reflections
-path_solver_diffuse_reflection: true  # Scattering from rough surfaces
+path_solver_diffuse_reflection: false  # Scattering from rough surfaces; needs material scattering coefficients > 0 (the included scenes have 0)
 path_solver_refraction: true  # Transmission through materials (Snell's law)
 path_solver_diffraction: true  # Signal bending around obstacles
 path_solver_edge_diffraction: true  # Diffraction at edges
 path_solver_diffraction_lit_region: false  # Diffraction in LoS regions
 path_solver_seed: 2  # Random seed
 path_solver_per_tx_users_only: false  # Compute paths only for TX-associated users
-path_solver_rx_batch_size: 50  # Solve each TX's receivers in batches of this size (null = all at once)
-path_solver_spec_table_size: 400000000  # Sionna specular-chain hash table size per source (null = Sionna default)
+path_solver_rx_batch_size: 50  # Solve each TX's receivers in batches of this size (default 50; null = all at once)
+path_solver_spec_table_size: 400000000  # Sionna specular-chain hash table size per source (default 4e8 with a synthetic array; null = Sionna default)
 
 # OFDM parameters
 num_subcarriers: 32  # OFDM subcarrier count

@@ -21,6 +21,15 @@ TX_RX_POLARIZATION = Literal["cross", "V", "H", "VH"]
 USER_SAMPLE_METRIC = Literal["path_gain", "rss", "sinr"]
 CFR_OUT_TYPE = Literal['drjit', 'jax', 'numpy', 'tf', 'torch']
 GROUND_MATERIAL_OVERRIDE = Literal["concrete", "asphalt_concrete"]
+
+# Defaults of the path solver batching (B7: Sionna RT discards paths silently
+# when many receivers share one solve or its specular-chain table is small).
+# The table default applies with a synthetic array only: without one, every TX
+# antenna is a source, and the table would exceed Sionna's 32-bit indices.
+DEFAULT_RX_BATCH_SIZE = 50
+DEFAULT_SPEC_TABLE_SIZE = 400_000_000
+# Sionna RT's own table size (SBCandidateGenerator.MIN_SPEC_COUNT_SIZE)
+SIONNA_SPEC_TABLE_SIZE = 10**6
 MOBILITY_PRESET = Literal[
     "stationary",
     "stationary_to_tx",
@@ -181,14 +190,15 @@ class ChannelConfigModel(BaseModel):
     path_solver_seed: int = Field(..., description="Seed for reproducibility")
     path_solver_per_tx_users_only: bool = Field(..., description="If true, solve paths only for users associated with each TX")
     path_solver_rx_batch_size: Optional[int] = Field(
-        None,
+        DEFAULT_RX_BATCH_SIZE,
         ge=1,
-        description="If set, solve each TX's receivers in batches of this size",
+        description="Solve each TX's receivers in batches of this size; null solves them all at once",
     )
     path_solver_spec_table_size: Optional[int] = Field(
         None,
         ge=1,
-        description="If set, minimum size of Sionna RT's specular-chain hash table per source",
+        description="Minimum size of Sionna RT's specular-chain hash table per source; "
+                    f"default {DEFAULT_SPEC_TABLE_SIZE} with a synthetic array; null keeps Sionna's default",
     )
     
     # OFDM parameters
@@ -231,6 +241,28 @@ class ChannelConfigModel(BaseModel):
         return [float(x) for x in v]
     
     @model_validator(mode='after')
+    def set_solver_defaults(self):
+        """
+        Apply the defaults of the path solver batching that depend on other keys.
+
+        An omitted path_solver_spec_table_size becomes DEFAULT_SPEC_TABLE_SIZE
+        with a synthetic array; an explicit null keeps Sionna's default.
+        Batching without a synthetic array needs cfr_out_type 'numpy', so an
+        omitted path_solver_rx_batch_size becomes null there, with a warning.
+        """
+        given = self.model_fields_set
+        if 'path_solver_spec_table_size' not in given and self.path_solver_synthetic_array:
+            self.path_solver_spec_table_size = DEFAULT_SPEC_TABLE_SIZE
+        if ('path_solver_rx_batch_size' not in given and not self.path_solver_synthetic_array
+                and self.cfr_out_type != 'numpy'):
+            self.path_solver_rx_batch_size = None
+            logger.warning(
+                "path_solver_rx_batch_size: batching needs cfr_out_type 'numpy' without a synthetic array, "
+                "so all receivers of a TX are solved at once, and some NLoS paths can be lost."
+            )
+        return self
+
+    @model_validator(mode='after')
     def validate_path_table_index(self):
         """
         Reject path solver settings whose table indices overflow 32 bits.
@@ -245,7 +277,7 @@ class ChannelConfigModel(BaseModel):
         if not self.path_solver_synthetic_array:
             num_pol = 2 if self.tx_polarization in ("cross", "VH") else 1
             num_sources = self.tx_num_rows * self.tx_num_cols * num_pol
-        entries = max(self.path_solver_spec_table_size or 10**6, self.path_solver_max_num_paths_per_src)
+        entries = max(self.path_solver_spec_table_size or SIONNA_SPEC_TABLE_SIZE, self.path_solver_max_num_paths_per_src)
         if entries * num_sources >= 2**32:
             raise ValueError(
                 f"max(path_solver_spec_table_size, path_solver_max_num_paths_per_src) x number of "

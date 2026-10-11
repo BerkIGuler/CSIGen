@@ -2,6 +2,13 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.4] - 2026-10-10
+
+### Changed
+
+- **Path solver batching on by default.** `path_solver_rx_batch_size` now defaults to 50, and `path_solver_spec_table_size` to 400,000,000 with a synthetic array. Before, a config without these keys solved all receivers of a TX at once with Sionna's small specular-chain table, which silently loses some NLoS paths; such a config now gets the same paths as the example configs, which already set both values. Set a key to `null` for the old behaviour. Without a synthetic array, the table keeps Sionna's default, because every TX antenna is a source and a larger table would exceed Sionna's 32-bit indices; with a `cfr_out_type` other than `numpy`, batching is not possible there, and the receivers are solved at once with a warning.
+- **Diffuse reflection off in the example configs.** `radio_map_diffuse_reflection` and `path_solver_diffuse_reflection` are now `false`. The materials of the included scenes have a scattering coefficient of 0, so the flags had no effect: with the flags on or off, the radio map samples the same users and the path solver finds the same paths, up to the usual run-to-run variation. Diffuse scattering needs scattering coefficients above 0.
+
 ## [0.3.3] - 2026-10-10
 
 ### Added
