@@ -1,6 +1,9 @@
 import numpy as np
 import colorsys
+import hashlib
 import logging
+import re
+from pathlib import Path
 from typing import List
 import matplotlib.pyplot as plt
 import mitsuba as mi
@@ -11,6 +14,8 @@ logger = logging.getLogger(__name__)
 # the barycentric slack that keeps a position on a shared edge inside a triangle
 DEGENERATE_TRIANGLE_AREA = 1e-6
 BARYCENTRIC_TOLERANCE = 1e-9
+# Files a scene XML references (Mitsuba's <string name="filename" value="..."/>), for scene_digest
+SCENE_FILE_REFERENCE = re.compile(r'name="filename"\s+value="([^"]+)"')
 
 def get_antenna_positions(
     building_positions, 
@@ -713,3 +718,24 @@ def display_path_count_histogram(hist: List[int]):
     
     plt.tight_layout()
     plt.show()
+
+
+def scene_digest(scene_xml_path) -> str:
+    """
+    SHA-256 of a scene: its XML and every file it references (meshes),
+    relative to the XML's directory, in a fixed order. Two scenes with the
+    same digest have the same geometry and materials, wherever they are stored.
+    """
+    xml = Path(scene_xml_path)
+    text = xml.read_bytes()
+    h = hashlib.sha256(text)
+    for rel in sorted(set(SCENE_FILE_REFERENCE.findall(text.decode(errors="replace")))):
+        f = xml.parent / rel
+        h.update(rel.encode())
+        if f.is_file():
+            with open(f, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+        else:
+            h.update(b"<missing>")
+    return h.hexdigest()

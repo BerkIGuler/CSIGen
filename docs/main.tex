@@ -181,6 +181,9 @@ cfr_out_type: "numpy"             # used only without a synthetic array
 # Saved data (optional)
 save_paths: true                  # default: true with a synthetic array
 save_cfr: true                    # default: true
+
+# Receivers of an earlier run (optional)
+# receivers_from: output/boston_1/20261015_120000   # solve its users again instead of sampling users
 \end{minted}
 
 \subsection{Reference}
@@ -194,6 +197,7 @@ Only what the comments above do not say is listed here.
   \item[Path solver.] \key{path\_solver\_synthetic\_array: true} traces rays from the array centres only and adds the phase of each element analytically; it is much faster and required for the path data (Section~\ref{sec:paths}). \key{path\_solver\_per\_tx\_users\_only: false} solves every sector for all users of the scene, so each user appears in every sector's file. \key{path\_solver\_rx\_batch\_size} and \key{path\_solver\_spec\_table\_size} avoid silent path loss (Section~\ref{sec:pipeline}); their defaults are 50 and $4 \cdot 10^8$. Without a synthetic array, the table keeps Sionna's default ($10^6$), since every TX antenna is a source; batching then needs \key{cfr\_out\_type: numpy}, so with another output type the receivers are solved at once, with a warning. The validator rejects settings whose table indices exceed Sionna's 32-bit range: $\max(\textrm{table size}, \texttt{max\_num\_paths\_per\_src})$ times the number of sources (1 with a synthetic array, else the number of TX antennas) must stay below $2^{32}$.
   \item[CFR.] \key{cfr\_out\_type} (\texttt{numpy}, \texttt{tf}, \texttt{torch}, \texttt{jax} or \texttt{drjit}) applies only without a synthetic array, where Sionna computes the CFR; with batching it must be \texttt{numpy}.
   \item[Saved data.] \key{save\_paths} requires a synthetic array. With \key{save\_cfr: false}, the files hold only the paths, from which \texttt{load\_cfr} rebuilds the CFR exactly. At least one of the two must be true.
+  \item[Receivers of an earlier run.] \key{receivers\_from} (optional) is the directory of an earlier run, with its \texttt{channel\_tx\_*.npz} files. Its users are solved again, with their names, positions, velocities and orientations, instead of sampling new ones, so that the two runs hold channels of the same users, for example at two carrier frequencies or with two arrays. The scene and the base stations must be those of the earlier run: the same scene contents (compared by \texttt{scene\_sha256}, or by the earlier run's scene file for runs before 0.3.6), the same scene-setup and base-station keys, and the same sectors at the same positions and orientations; any difference is an error. The radio map, user sampling and mobility keys are still required by the validator but ignored, and a warning says so. The earlier run must be a full run of CSIGen 0.3.3 or later, not the output of the split script. Users that had no path to any sector in the earlier run are not in its files and are left out; \texttt{users\_per\_tx} and \texttt{total\_users} in the metadata stay those of the earlier run, so that the user indices and serving sectors keep their meaning.
 \end{description}
 
 \clearpage
@@ -209,7 +213,7 @@ Only what the comments above do not say is listed here.
 
 \paragraph{4. Edge filtering.} With \key{scene\_edge\_epsilon} $> 0$, users within that distance of the bounding box of all sampled users are removed (Fig.~\ref{fig:edge_user_filter}). These users tend to be LoS-dominated. The filter acts after sampling, so a sector can keep fewer users than requested.
 
-\paragraph{5. Receivers.} Each user becomes a receiver with the orientation and velocity of the mobility preset, drawn with \key{user\_sample\_seed}.
+\paragraph{5. Receivers.} Each user becomes a receiver with the orientation and velocity of the mobility preset, drawn with \key{user\_sample\_seed}. With \key{receivers\_from}, steps 3--5 (radio map, edge filtering, receivers) are replaced: the receivers of the earlier run are added as they were, after a check that its scene and base stations match.
 
 \paragraph{6. Path solving.} Each sector is solved alone, for its own users or for all users. Sionna RT stores each new chain of reflecting surfaces per receiver in a hash table of fixed size per source; when many receivers share one solve, the table fills up and new chains are discarded without a warning, so some NLoS paths can be lost (LoS paths are traced separately and are kept). CSIGen therefore solves the receivers in batches of \key{path\_solver\_rx\_batch\_size} with a larger table (\key{path\_solver\_spec\_table\_size}). It also records the largest fill of Sionna's path buffer (\texttt{path\_buffer\_fill}, as a fraction of \key{path\_solver\_max\_num\_paths\_per\_src}) and logs a warning when it reaches 1, that is, when candidate paths were discarded; there is no warning below that.
 
@@ -275,6 +279,7 @@ Key & Content \\
 \texttt{path\_buffer\_fill} & largest fill of Sionna's path buffer (at 1, paths were discarded) \\
 \texttt{cfr\_saved}, \texttt{cfr\_shape}, \texttt{cfr\_dtype}, \texttt{cfr\_axes} & the CFR, also when \texttt{h} is not saved \\
 \texttt{cfr\_params}, \texttt{cfr\_source} & what \texttt{load\_cfr} needs; how the CFR was computed \\
+\texttt{scene\_sha256} & SHA-256 of the scene XML and the mesh files it references (since 0.3.6) \\
 \texttt{paths\_saved}, \texttt{path\_fields} & whether paths are saved; their description \\
 \texttt{tx\_array}, \texttt{rx\_array} & array layouts and antenna order \\
 \texttt{config} & the validated config \\
