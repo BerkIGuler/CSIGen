@@ -7,6 +7,11 @@ import mitsuba as mi
 
 logger = logging.getLogger(__name__)
 
+# Tolerances of terrain_height_at: twice the area (m^2) below which a terrain triangle counts as degenerate, and
+# the barycentric slack that keeps a position on a shared edge inside a triangle
+DEGENERATE_TRIANGLE_AREA = 1e-6
+BARYCENTRIC_TOLERANCE = 1e-9
+
 def get_antenna_positions(
     building_positions, 
     scene_center=[0.0, 0.0],
@@ -64,6 +69,91 @@ def get_antenna_positions(
         
         results.append((building_id, [antenna_x, antenna_y, antenna_z]))
     
+    return results
+
+
+def terrain_height_at(scene, xy) -> np.ndarray:
+    """
+    Height of the terrain mesh (the scene's ``ground`` object) at horizontal positions.
+
+    Each position takes the height of the terrain triangle that contains it,
+    interpolated linearly within the triangle.
+
+    Args:
+        scene: Sionna scene object with a ``ground`` mesh
+        xy: Array-like of shape (P, 2), positions [x, y] in meters
+
+    Returns:
+        numpy.ndarray: Heights of shape (P,)
+
+    Raises:
+        ValueError: If the scene has no ground mesh or a position is outside it
+    """
+    terrain_obj = scene.objects.get("ground")
+    if terrain_obj is None or not hasattr(terrain_obj, "mi_mesh"):
+        raise ValueError("The scene has no ground mesh, so base station heights cannot follow the terrain")
+    vertices = _extract_vertices_from_mi_mesh(terrain_obj.mi_mesh)
+    if vertices is None:
+        raise ValueError("Could not read the vertices of the ground mesh, so base station heights cannot follow the terrain")
+    faces = np.array(mi.traverse(terrain_obj.mi_mesh)["faces"].numpy(), dtype=np.int64).reshape(-1, 3)
+    tri = vertices[faces]                                          # (F, 3, 3)
+    a, b, c = tri[:, 0, :2], tri[:, 1, :2], tri[:, 2, :2]
+    det = (b[:, 1] - c[:, 1]) * (a[:, 0] - c[:, 0]) + (c[:, 0] - b[:, 0]) * (a[:, 1] - c[:, 1])
+    usable = np.abs(det) > DEGENERATE_TRIANGLE_AREA                # no degenerate (clamped) triangles
+    heights = []
+    for x, y in np.asarray(xy, dtype=np.float64).reshape(-1, 2):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            w1 = ((b[:, 1] - c[:, 1]) * (x - c[:, 0]) + (c[:, 0] - b[:, 0]) * (y - c[:, 1])) / det
+            w2 = ((c[:, 1] - a[:, 1]) * (x - c[:, 0]) + (a[:, 0] - c[:, 0]) * (y - c[:, 1])) / det
+            w3 = 1.0 - w1 - w2                                     # NaN for degenerate triangles, excluded below
+        tol = -BARYCENTRIC_TOLERANCE
+        inside = usable & (w1 >= tol) & (w2 >= tol) & (w3 >= tol)
+        if not inside.any():
+            raise ValueError(f"Base station position ({x:.1f}, {y:.1f}) is outside the terrain mesh")
+        k = np.flatnonzero(inside)[0]
+        heights.append(w1[k] * tri[k, 0, 2] + w2[k] * tri[k, 1, 2] + w3[k] * tri[k, 2, 2])
+    return np.array(heights)
+
+
+def get_mast_antenna_positions(scene, bs_positions, mast_height, building_positions=None):
+    """
+    Antenna positions of base stations on masts at given horizontal positions.
+
+    Each antenna is placed ``mast_height`` above the terrain at its position,
+    so that the masts follow the terrain. Call it before the terrain is clipped:
+    the clipping clamps the terrain vertices and distorts the triangles near the
+    clip bounds. A position inside the bounding box of a building is an error if
+    the antenna would be below the building's top, where it would sit inside the
+    building, and logs a warning otherwise.
+
+    Args:
+        scene: Sionna scene object with a ``ground`` mesh
+        bs_positions: List of [x, y] positions in meters
+        mast_height: Antenna height above the terrain (meters)
+        building_positions: Optional dictionary from extract_building_positions_from_scene()
+
+    Returns:
+        list: List of tuples (site_name, antenna_position), antenna_position [x, y, z] in meters,
+              in the order of bs_positions
+
+    Raises:
+        ValueError: If a position is outside the terrain, or an antenna would be inside a building
+    """
+    xy = np.asarray(bs_positions, dtype=np.float64).reshape(-1, 2)
+    ground = terrain_height_at(scene, xy)
+    results = []
+    for i, ((x, y), z) in enumerate(zip(xy, ground)):
+        antenna_z = z + mast_height
+        for building_id, data in (building_positions or {}).items():
+            if data["min"][0] <= x <= data["max"][0] and data["min"][1] <= y <= data["max"][1]:
+                if antenna_z <= data["max"][2]:
+                    raise ValueError(f"Base station {i} at ({x:.1f}, {y:.1f}) is within the bounding box of building "
+                                     f"{building_id}, and its antenna ({antenna_z:.1f} m) is below the building's top "
+                                     f"({data['max'][2]:.1f} m): move it or raise bs_mast_height")
+                logger.warning(f"Base station {i} at ({x:.1f}, {y:.1f}) is within the bounding box of building "
+                               f"{building_id}; its antenna is above the building's top")
+                break
+        results.append((f"site_{i}", [float(x), float(y), float(antenna_z)]))
     return results
 
 

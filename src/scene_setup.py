@@ -10,6 +10,7 @@ import logging
 from src.utils import (
     extract_building_positions_from_scene,
     get_antenna_positions,
+    get_mast_antenna_positions,
     clip_terrain_to_buildings,
     get_building_bounds
 )
@@ -23,13 +24,15 @@ def setup_scene(
     scene_xml_path: Path,
     carrier_frequency: float,
     scene_center: list = [0.0, 0.0],
-    antenna_height_offset: float = 10.0,
-    num_deployment_buildings: int = 1,
+    antenna_height_offset: Optional[float] = 10.0,
+    num_deployment_buildings: Optional[int] = 1,
     clip_terrain: bool = True,
     terrain_clip_margin: float = 15.0,
     user_shift_from_ground: float = 1.5,
     override_ground_material: Optional[str] = None,
-    merge_shapes: bool = False
+    merge_shapes: bool = False,
+    bs_positions: Optional[list] = None,
+    bs_mast_height: Optional[float] = None,
 ) -> Tuple[Any, dict, Optional[Any], list]:
     """
     Load and prepare scene for channel generation.
@@ -40,7 +43,8 @@ def setup_scene(
     3. Extracts building positions
     4. Optionally clips terrain to building bounds
     5. Creates measurement surface from terrain (if elevation data exists)
-    6. Gets antenna positions for deployment buildings
+    6. Gets the antenna positions: on the rooftops of the highest buildings, or on
+       masts at bs_positions
     
     Parameters
     ----------
@@ -65,6 +69,12 @@ def setup_scene(
         The material is created if the scene does not define it.
     merge_shapes : bool, default=False
         Whether to merge building shapes (False recommended for building extraction)
+    bs_positions : list or None, default=None
+        Horizontal positions [x, y] (meters) of base stations on masts. If given,
+        they replace the rooftop placement (num_deployment_buildings and
+        antenna_height_offset are not used).
+    bs_mast_height : float or None, default=None
+        Antenna height above the terrain at each of bs_positions (meters)
     
     Returns
     -------
@@ -73,7 +83,7 @@ def setup_scene(
         - scene: Loaded Sionna scene object
         - building_positions: Dictionary of building data
         - measurement_surface: Mesh object for measurement surface (None if no elevation)
-        - antenna_information: List of (building_id, antenna_position) tuples
+        - antenna_information: List of (building_id or site name, antenna_position) tuples
     """
     scene = load_scene(scene_xml_path, merge_shapes=merge_shapes)
 
@@ -84,7 +94,14 @@ def setup_scene(
     scene.frequency = carrier_frequency
     
     building_positions = extract_building_positions_from_scene(scene)
-    
+
+    # Masts first: their heights come from the terrain before clipping, which clamps the terrain vertices and
+    # distorts the triangles near the clip bounds
+    if bs_positions is not None:
+        mast_information = get_mast_antenna_positions(
+            scene, bs_positions, bs_mast_height, building_positions=building_positions
+        )
+
     # Optionally clip terrain to building bounds BEFORE creating measurement surface
     if clip_terrain and building_positions:
         bounds = get_building_bounds(building_positions)
@@ -92,6 +109,15 @@ def setup_scene(
             (min_x, min_y), (max_x, max_y) = bounds
             logger.info(f"Building bounds: x=[{min_x:.1f}, {max_x:.1f}], y=[{min_y:.1f}, {max_y:.1f}]")
             clip_terrain_to_buildings(scene, building_positions, margin=terrain_clip_margin)
+            if bs_positions is not None:
+                lo_x, lo_y = min_x - terrain_clip_margin, min_y - terrain_clip_margin
+                hi_x, hi_y = max_x + terrain_clip_margin, max_y + terrain_clip_margin
+                for i, (x, y) in enumerate(bs_positions):
+                    if not (lo_x <= x <= hi_x and lo_y <= y <= hi_y):
+                        raise ValueError(
+                            f"Base station {i} at ({x:.1f}, {y:.1f}) is outside the clipped terrain, the building "
+                            f"bounds plus terrain_clip_margin: x=[{lo_x:.1f}, {hi_x:.1f}], y=[{lo_y:.1f}, {hi_y:.1f}]"
+                        )
     
     # Detect if elevation data is esent by checking for ground object
     terrain_obj = scene.objects.get("ground")
@@ -105,13 +131,17 @@ def setup_scene(
         logger.warning("No elevation data found, cannot create measurement surface")
         measurement_surface = None
     
-    # Get antenna positions for deployment buildings
-    antenna_information = get_antenna_positions(
-        building_positions,
-        scene_center=scene_center,
-        antenna_height_offset=antenna_height_offset,
-        num_deployment_buildings=num_deployment_buildings
-    )
+    # Get antenna positions: on masts at the given positions, or on the highest rooftops
+    if bs_positions is not None:
+        antenna_information = mast_information
+        logger.info(f"{len(antenna_information)} base stations on {bs_mast_height} m masts at the given positions")
+    else:
+        antenna_information = get_antenna_positions(
+            building_positions,
+            scene_center=scene_center,
+            antenna_height_offset=antenna_height_offset,
+            num_deployment_buildings=num_deployment_buildings
+        )
     
     return scene, building_positions, measurement_surface, antenna_information
 
