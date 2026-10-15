@@ -15,7 +15,13 @@ from src.scene_setup import setup_scene
 from src.base_station import set_tx_antenna_array, add_base_station
 from src.user_equipment import set_rx_antenna_array
 from src.radio_map import solve_radio_map, sample_user_positions, filter_positions_by_edge_distance
-from src.receivers import add_receivers_from_samples, rx_names_for_tx
+from src.receivers import (
+    add_receivers_from_samples,
+    add_receivers_from_run,
+    check_replay_base_stations,
+    load_receivers,
+    rx_names_for_tx,
+)
 from src.path_solver import (
     iter_paths_for_receivers,
     set_specular_chain_table_size,
@@ -24,6 +30,7 @@ from src.path_solver import (
     _compute_rx_valid_and_los_masks,
 )
 from src.channel import compute_cfr_for_paths
+from src.utils import scene_digest
 from src.path_data import (
     extract_path_data,
     concat_path_data,
@@ -112,6 +119,8 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
         - num_subcarriers, num_ofdm_symbols, subcarrier_spacing
         - cfr_normalize_delays, cfr_normalize, cfr_out_type
         - save_paths, save_cfr
+        - receivers_from (optional): an earlier run whose receivers are solved
+          again instead of sampling users (radio map and sampling keys unused)
         
         Scene Setup:
         - scene_center, antenna_height_offset, num_deployment_buildings
@@ -197,63 +206,82 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             tx_power_dbm=config['tx_power_dbm']
         )
     
-    # Step 4: Solve radio map
-    logger.info("Step 4: Solving radio map...")
-    radio_map = solve_radio_map(
-        scene,
-        measurement_surface=measurement_surface,
-        specular_reflection=config['radio_map_specular_reflection'],
-        diffuse_reflection=config['radio_map_diffuse_reflection'],
-        refraction=config['radio_map_refraction'],
-        diffraction=config['radio_map_diffraction'],
-        edge_diffraction=config['radio_map_edge_diffraction'],
-        diffraction_lit_region=config['radio_map_diffraction_lit_region'],
-        max_depth=config['radio_map_max_depth'],
-        samples_per_tx=config['radio_map_samples_per_tx'],
-        seed=config['radio_map_seed'],
-    )
-    
-    # Step 5: Sample user positions
-    logger.info("Step 5: Sampling user positions...")
-    sampled_positions = sample_user_positions(
-        radio_map,
-        num_pos_per_tx=config['num_user_samples_per_tx'],
-        metric=config['user_sample_metric'],
-        min_val_db=config['user_sample_min_val_db'],
-        max_val_db=config['user_sample_max_val_db'],
-        min_dist=config['user_sample_min_dist'],
-        max_dist=config['user_sample_max_dist'],
-        tx_association=config['tx_association'],
-        center_pos=config['sample_center_pos'],
-        seed=config['user_sample_seed']
-    )
-    
-    # Step 5.5: Filter positions by edge distance
-    if config.get('scene_edge_epsilon', 0.0) > 0.0:
-        logger.info("Step 5.5: Filtering positions by edge distance...")
-        sampled_positions = filter_positions_by_edge_distance(
-            sampled_positions,
-            edge_epsilon=config['scene_edge_epsilon']
+    receivers_from = config.get('receivers_from')
+    if receivers_from:
+        # Instead of the radio map, the user sampling and the new receivers (steps 4-6): the receivers of an
+        # earlier run, at the same positions, velocities and orientations. users_per_tx and total_users stay those
+        # of the earlier run, so that the user indices and serving TXs keep their meaning; users without a path to
+        # any TX there are not in its files and have no receiver here.
+        logger.info("Steps 4-6 (radio map, user sampling, receivers): the receivers of %s...", receivers_from)
+        logger.warning("receivers_from: the radio map, user sampling and mobility keys of the config are ignored; "
+                       "the users keep the positions, velocities and orientations of the earlier run")
+        replay = load_receivers(receivers_from)
+        check_replay_base_stations(scene, replay, config)
+        num_txs_actual, users_per_tx, total_users = replay['num_txs'], replay['users_per_tx'], replay['total_users']
+        all_rx_names = add_receivers_from_run(scene, replay)
+    else:
+        # Step 4: Solve radio map
+        logger.info("Step 4: Solving radio map...")
+        radio_map = solve_radio_map(
+            scene,
+            measurement_surface=measurement_surface,
+            specular_reflection=config['radio_map_specular_reflection'],
+            diffuse_reflection=config['radio_map_diffuse_reflection'],
+            refraction=config['radio_map_refraction'],
+            diffraction=config['radio_map_diffraction'],
+            edge_diffraction=config['radio_map_edge_diffraction'],
+            diffraction_lit_region=config['radio_map_diffraction_lit_region'],
+            max_depth=config['radio_map_max_depth'],
+            samples_per_tx=config['radio_map_samples_per_tx'],
+            seed=config['radio_map_seed'],
         )
-    
-    # Step 6: Add receivers
-    logger.info("Step 6: Adding receivers...")
-    num_txs_actual, users_per_tx, total_users = add_receivers_from_samples(
-        scene,
-        sampled_positions,
-        num_sectors=num_sectors,
-        mobility_preset=config['mobility_preset'],
-        mobility_presets=config['mobility_presets'],
-        seed=config['user_sample_seed']
-    )
-    
+        
+        # Step 5: Sample user positions
+        logger.info("Step 5: Sampling user positions...")
+        sampled_positions = sample_user_positions(
+            radio_map,
+            num_pos_per_tx=config['num_user_samples_per_tx'],
+            metric=config['user_sample_metric'],
+            min_val_db=config['user_sample_min_val_db'],
+            max_val_db=config['user_sample_max_val_db'],
+            min_dist=config['user_sample_min_dist'],
+            max_dist=config['user_sample_max_dist'],
+            tx_association=config['tx_association'],
+            center_pos=config['sample_center_pos'],
+            seed=config['user_sample_seed']
+        )
+        
+        # Step 5.5: Filter positions by edge distance
+        if config.get('scene_edge_epsilon', 0.0) > 0.0:
+            logger.info("Step 5.5: Filtering positions by edge distance...")
+            sampled_positions = filter_positions_by_edge_distance(
+                sampled_positions,
+                edge_epsilon=config['scene_edge_epsilon']
+            )
+        
+        # Step 6: Add receivers
+        logger.info("Step 6: Adding receivers...")
+        num_txs_actual, users_per_tx, total_users = add_receivers_from_samples(
+            scene,
+            sampled_positions,
+            num_sectors=num_sectors,
+            mobility_preset=config['mobility_preset'],
+            mobility_presets=config['mobility_presets'],
+            seed=config['user_sample_seed']
+        )
+        
+        all_rx_names = [f"UE_{i}" for i in range(total_users)]
+
+    # The scene by its contents (geometry and materials), recorded with every file
+    scene_sha256 = scene_digest(scene_xml_path)
+
     # Step 7 & 8: Solve paths and compute CFR per TX in a streaming fashion
     logger.info("Step 7 & 8: Solving paths and computing CFR per TX (streaming)...")
 
     per_tx_users_only = config['path_solver_per_tx_users_only']
     rx_batch_size = config.get('path_solver_rx_batch_size')
     set_specular_chain_table_size(config.get('path_solver_spec_table_size'))
-    all_rx_names = [f"UE_{i}" for i in range(total_users)]
+    present = set(all_rx_names)
     synthetic = config['path_solver_synthetic_array']
     # None (the default) means: save paths with a synthetic array, as in validate_saved_data
     save_paths = config.get('save_paths')
@@ -281,7 +309,8 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
 
         # Receivers for this TX (its own users or all users), solved in batches
         if per_tx_users_only:
-            tx_rx_names = rx_names_for_tx(users_per_tx, tx_idx)
+            # (a replayed run has no receivers for users without a path to any TX there)
+            tx_rx_names = [n for n in rx_names_for_tx(users_per_tx, tx_idx) if n in present]
         else:
             tx_rx_names = all_rx_names
         if (not synthetic and rx_batch_size and len(tx_rx_names) > rx_batch_size
@@ -431,6 +460,8 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             'tx_array': array_layout(config, 'tx', scene.tx_array.num_ant),
             'rx_array': array_layout(config, 'rx', scene.rx_array.num_ant),
             'config': config,
+            # SHA-256 of the scene XML and the files it references (src.utils.scene_digest)
+            'scene_sha256': scene_sha256,
         }
 
         if path_data is not None:

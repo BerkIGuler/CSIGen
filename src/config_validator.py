@@ -227,6 +227,11 @@ class ChannelConfigModel(BaseModel):
                     "default: true with a synthetic array, false without",
     )
     save_cfr: bool = Field(True, description="Save the CFR h; if false, rebuild it from the paths with load_cfr")
+    receivers_from: Optional[Union[str, Path]] = Field(
+        None,
+        description="Optional directory of an earlier run (channel_tx_*.npz) whose receivers are solved again, "
+                    "instead of sampling users; the radio map and the user sampling keys are then unused",
+    )
     
     @field_validator('scene_xml_path')
     @classmethod
@@ -239,6 +244,19 @@ class ChannelConfigModel(BaseModel):
             raise ValueError(f"Scene XML path is not a file: {path}")
         return str(path)
     
+    @field_validator('receivers_from')
+    @classmethod
+    def validate_receivers_from(cls, v):
+        """Validate that the earlier run exists and has channel files."""
+        if v is None:
+            return v
+        path = Path(v)
+        if not path.is_dir():
+            raise ValueError(f"receivers_from is not a directory: {path}")
+        if not any(path.glob("channel_tx_*.npz")):
+            raise ValueError(f"receivers_from has no channel_tx_*.npz files: {path}")
+        return str(path)
+
     @field_validator('scene_center')
     @classmethod
     def validate_scene_center(cls, v):

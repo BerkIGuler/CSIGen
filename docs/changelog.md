@@ -2,6 +2,13 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.6] - 2026-10-14
+
+### Added
+
+- **Scene digest in the metadata.** Every channel file records `scene_sha256`, the SHA-256 of the scene XML and of the mesh files it references, so that runs can be matched to the exact scene geometry and materials they were made with.
+- **Receivers of an earlier run.** The new optional key `receivers_from` (the directory of an earlier run) solves the users of that run again, with their names, positions, velocities and orientations, instead of sampling new users. The two runs then hold channels of the same users, matched by their names (`UE_<k>`) and serving sectors, for example at two carrier frequencies (the Doppler follows the new carrier) or with two arrays. The scene and the base stations must be those of the earlier run (the same scene contents, scene-setup and base-station keys, and sectors at the same positions and orientations); any difference is an error, and the earlier run must be a full run of CSIGen 0.3.3 or later. The radio map, user sampling and mobility keys are then ignored (a warning says so). Users that had no path to any sector in the earlier run are not in its files and are left out; users with no path at the new settings are dropped as usual.
+
 ## [0.3.5] - 2026-10-14
 
 ### Added
