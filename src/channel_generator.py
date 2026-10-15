@@ -115,6 +115,7 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
         
         Scene Setup:
         - scene_center, antenna_height_offset, num_deployment_buildings
+        - bs_positions, bs_mast_height (optional: base stations on masts)
         - clip_terrain_to_buildings, terrain_clip_margin, user_shift_from_ground
         
     Yields
@@ -136,8 +137,8 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
     
     # Scene setup parameters
     scene_center = config['scene_center']
-    antenna_height_offset = config['antenna_height_offset']
-    num_deployment_buildings = config['num_deployment_buildings']
+    antenna_height_offset = config.get('antenna_height_offset')      # rooftop placement only
+    num_deployment_buildings = config.get('num_deployment_buildings')
     clip_terrain = config['clip_terrain_to_buildings']
     terrain_clip_margin = config['terrain_clip_margin']
     user_shift_from_ground = config['user_shift_from_ground']
@@ -155,6 +156,8 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
         terrain_clip_margin=terrain_clip_margin,
         user_shift_from_ground=user_shift_from_ground,
         override_ground_material=override_ground_material,
+        bs_positions=config.get('bs_positions'),
+        bs_mast_height=config.get('bs_mast_height'),
     )
     
     # Step 2: Set antenna arrays
@@ -182,7 +185,7 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
     # Step 3: Add base stations
     logger.info("Step 3: Adding base stations...")
     num_sectors = config['num_sectors']
-    for i, (building_id, antenna_position) in enumerate(antenna_information):
+    for i, (_, antenna_position) in enumerate(antenna_information):
         bs_name = f"BS_{i}"
         add_base_station(
             scene,

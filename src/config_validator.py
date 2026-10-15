@@ -10,7 +10,7 @@ import logging
 import yaml
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Literal
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, conlist, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +91,17 @@ class ChannelConfigModel(BaseModel):
     
     # Scene setup parameters
     scene_center: List[Union[int, float]] = Field(..., min_length=2, max_length=2, description="Center of the scene")
-    antenna_height_offset: Union[int, float] = Field(..., ge=0, description="Height offset of antennas from the roof in meters")
-    num_deployment_buildings: int = Field(..., ge=1, description="Number of buildings to deploy base stations on")
+    antenna_height_offset: Optional[Union[int, float]] = Field(
+        None, ge=0, description="Height offset of antennas from the roof in meters (rooftop placement; required without bs_positions)")
+    num_deployment_buildings: Optional[int] = Field(
+        None, ge=1, description="Number of buildings to deploy base stations on (rooftop placement; required without bs_positions)")
+    bs_positions: Optional[conlist(conlist(Union[int, float], min_length=2, max_length=2), min_length=1)] = Field(
+        None,
+        description="Optional positions [x, y] in meters of base stations on masts; they replace the rooftop placement",
+    )
+    bs_mast_height: Optional[Union[int, float]] = Field(
+        None, gt=0, description="Antenna height above the terrain in meters at each of bs_positions",
+    )
     clip_terrain_to_buildings: bool = Field(..., description="Whether to clip the terrain to building bounds")
     terrain_clip_margin: Union[int, float] = Field(..., ge=0, description="Margin in meters around buildings when clipping terrain")
     user_shift_from_ground: Union[int, float] = Field(..., ge=0, description="Up shift in meters of users from the ground plane")
@@ -304,6 +313,16 @@ class ChannelConfigModel(BaseModel):
                 raise ValueError("save_cfr: false requires saved paths, i.e. path_solver_synthetic_array: true")
         elif not (self.save_paths or self.save_cfr):
             raise ValueError("At least one of save_paths and save_cfr must be true")
+        return self
+
+    @model_validator(mode='after')
+    def validate_bs_positions(self):
+        """Check the base station placement: bs_positions and bs_mast_height together (masts), or
+        num_deployment_buildings and antenna_height_offset (rooftops)."""
+        if (self.bs_positions is None) != (self.bs_mast_height is None):
+            raise ValueError("bs_positions and bs_mast_height must be given together")
+        if self.bs_positions is None and (self.num_deployment_buildings is None or self.antenna_height_offset is None):
+            raise ValueError("Without bs_positions, num_deployment_buildings and antenna_height_offset are required")
         return self
 
     @model_validator(mode='after')

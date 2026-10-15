@@ -2,6 +2,12 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.5] - 2026-10-14
+
+### Added
+
+- **Base stations on masts.** The new optional keys `bs_positions` (a list of `[x, y]` positions in meters, in the scene's frame) and `bs_mast_height` (meters) place one base station at each position, with its antennas `bs_mast_height` above the terrain there: the height of the terrain triangle that contains the position, interpolated within the triangle, so the masts follow hills. They replace the rooftop placement, which puts base stations on the highest buildings and, in suburban or rural scenes, on houses; `num_deployment_buildings` and `antenna_height_offset`, otherwise required, can then be left out. Give both keys or neither. The sectors, downtilt and power are as before, and the positions are recorded as the TX positions in the metadata. A position outside the clipped terrain is an error, as is an antenna below the top of a building whose bounding box contains its position; an antenna above such a building logs a warning. Without the keys, the base stations are placed as before.
+
 ## [0.3.4] - 2026-10-10
 
 ### Changed

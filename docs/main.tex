@@ -14,7 +14,7 @@
 
 \title{CSIGen Documentation}
 \author{Berkay Guler}
-\date{Version 0.3.4 \\ Last Updated: October 10th, 2026}
+\date{Version 0.3.5 \\ Last Updated: October 14th, 2026}
 
 \begin{document}
 \sloppy
@@ -90,6 +90,8 @@ carrier_frequency: 3500000000.0  # Hz
 scene_center: [0.0, 0.0]          # [x, y] (m); BS antennas are placed toward it
 antenna_height_offset: 10.0       # BS antenna height above the rooftop (m)
 num_deployment_buildings: 1       # number of base stations, on the highest buildings
+# bs_positions: [[-150, -150], [150, 150]]  # optional: base stations on masts at [x, y] (m) instead
+# bs_mast_height: 25.0                       # optional, with bs_positions: antenna height above terrain (m)
 clip_terrain_to_buildings: true   # clip the ground to the building area
 terrain_clip_margin: 15.0         # margin around the buildings when clipping (m)
 user_shift_from_ground: 1.5       # UE height above ground (m)
@@ -184,7 +186,7 @@ save_cfr: true                    # default: true
 \subsection{Reference}
 Only what the comments above do not say is listed here.
 \begin{description}
-  \item[Scene setup.] \key{num\_deployment\_buildings} is the number of base stations (Section~\ref{sec:pipeline}). \key{override\_ground\_material} (optional) assigns \texttt{concrete} (1--100\,GHz) or \texttt{asphalt\_concrete} (1--40\,GHz) to the \texttt{ground} object and removes the wet-ground materials; without it, the scene's materials are kept.
+  \item[Scene setup.] \key{num\_deployment\_buildings} is the number of base stations (Section~\ref{sec:pipeline}). With \key{bs\_positions} (optional, a list of $[x, y]$ positions in meters) and \key{bs\_mast\_height} (meters), the base stations stand on masts instead: one at each position, its antennas \key{bs\_mast\_height} above the terrain there, and \key{num\_deployment\_buildings} and \key{antenna\_height\_offset}, otherwise required, can be left out. This suits scenes whose highest buildings are houses, such as suburban or rural areas. Give both keys or neither. The positions must lie inside the clipped terrain (with \key{clip\_terrain\_to\_buildings}), and an antenna must not be below the top of a building whose bounding box contains its position. \key{override\_ground\_material} (optional) assigns \texttt{concrete} (1--100\,GHz) or \texttt{asphalt\_concrete} (1--40\,GHz) to the \texttt{ground} object and removes the wet-ground materials; without it, the scene's materials are kept.
   \item[Arrays.] All sectors share the TX array and all users the RX array (Sionna RT allows one of each per scene). \texttt{VH} and \texttt{cross} have two polarizations, so twice the elements. The antenna order is given in Section~\ref{sec:output}.
   \item[Interaction toggles.] The \texttt{radio\_map\_*} and \texttt{path\_solver\_*} flags (reflection, refraction, diffraction, depth, samples, seed) are separate, so the radio map, which only places users, can be cheaper than the path solve. See the \href{https://arxiv.org/abs/2504.21719}{Sionna RT technical report} for their meaning. Diffuse reflection has no effect with the included scenes (Section~\ref{sec:materials}).
   \item[User sampling.] \key{num\_user\_samples\_per\_tx} is a maximum: a sector with fewer valid cells gets fewer users, possibly none. The radio-map metric is per sector.
@@ -201,7 +203,7 @@ Only what the comments above do not say is listed here.
 
 \paragraph{1. Scene setup.} The scene is loaded at \key{carrier\_frequency}. With \key{clip\_terrain\_to\_buildings}, the ground is clipped to the bounding box of the buildings plus \key{terrain\_clip\_margin}, so that users are not placed in empty land around the city (Fig.~\ref{fig:scene_clip}). The clipped ground, raised by \key{user\_shift\_from\_ground}, is the measurement surface on which users are placed.
 
-\paragraph{2. Base stations.} The \key{num\_deployment\_buildings} buildings with the highest centroids each get one base station, at the rooftop vertex closest to \key{scene\_center} (so that the building lies behind the antenna) and \key{antenna\_height\_offset} above the roof's highest point (Fig.~\ref{fig:antenna_placement}). Each base station has \key{num\_sectors} sectors at the same position, with azimuths $\key{azimuth\_offset} + 360^\circ (s-1)/N_s$ and the downtilt \key{mechanical\_tilt}; the orientation in Sionna's angles is $[\textrm{azimuth}, \textrm{tilt}, 0]$.
+\paragraph{2. Base stations.} With \key{bs\_positions}, each position gets one base station on a mast: its height is that of the terrain triangle containing the position, interpolated within the triangle and taken before the clipping, plus \key{bs\_mast\_height}; a position inside the bounding box of a building logs a warning, or is an error if the antenna would be below the building's top. Otherwise, the \key{num\_deployment\_buildings} buildings with the highest centroids each get one base station, at the rooftop vertex closest to \key{scene\_center} (so that the building lies behind the antenna) and \key{antenna\_height\_offset} above the roof's highest point (Fig.~\ref{fig:antenna_placement}). Each base station has \key{num\_sectors} sectors at the same position, with azimuths $\key{azimuth\_offset} + 360^\circ (s-1)/N_s$ and the downtilt \key{mechanical\_tilt}; the orientation in Sionna's angles is $[\textrm{azimuth}, \textrm{tilt}, 0]$.
 
 \paragraph{3. Radio map and user sampling.} A radio map over the measurement surface gives \key{user\_sample\_metric} per sector in every cell, a triangle of the surface mesh. A cell is valid for a sector if the metric lies within the thresholds, the cell centre lies within the distance limits and, with \key{tx\_association}, the sector is the strongest in the cell. Each sector takes up to \key{num\_user\_samples\_per\_tx} distinct valid cells (Fig.~\ref{fig:user_sampling} shows an example): every cell gets a random key from \key{user\_sample\_seed}, and the sector takes the valid cells with the lowest keys. The radio map is not bit-identical between GPU runs, and with this rule a cell that changes validity moves at most one user. Users are placed at the cell centres or, with \key{sample\_center\_pos: false}, at a random point of the cell.
 
