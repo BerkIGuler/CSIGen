@@ -2,6 +2,12 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-11-02
+
+### Changed
+
+- **The saved path data and the config validation without Sionna RT.** Before, every import from `src` loaded Sionna RT, because the package imported all its modules at once. Now `src` imports each name and each submodule when it is first used. Thus, the functions that read saved path data (`load_cfr`, `cfr_from_paths`, `select_paths`, `path_stats`, `retarget_arrays` and `retarget_velocities`) need only NumPy. The config validation needs NumPy, PyYAML and pydantic, and `scripts/split_dataset.py` needs NumPy and PyYAML. A dataset of path data can therefore be used on a machine without Sionna RT or a GPU. The names that `src` exports do not change, and `import src` followed by `src.<module>` still works. Generating channels still needs Sionna RT. A name whose module needs a package that is not installed raises an `AttributeError` that names the missing package.
+
 ## [0.4.0] - 2026-11-02
 
 ### Added
