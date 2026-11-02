@@ -21,7 +21,7 @@ from src.path_data import load_cfr
 h = load_cfr("output/<scene_name>/<run_id>/channel_tx_0.npz")
 ```
 
-`load_cfr` also takes another numerology (`num_subcarriers`, `subcarrier_spacing`, `num_ofdm_symbols`, `symbol_duration`), other planar arrays (`tx_array=dict(num_rows=8, num_cols=8)`), other RX velocities (`rx_velocities=[20.0, 0.0, 0.0]`) or only some of the paths (`max_paths=3`, `max_bounces=0` for LoS only, `power_range_db`, `exclude_interactions`). With `save_cfr: false` in the config, the files hold only the paths. See `docs/main.pdf` for the fields.
+`load_cfr` also takes another numerology (`num_subcarriers`, `subcarrier_spacing`, `num_ofdm_symbols`, `symbol_duration`), other planar arrays (`tx_array=dict(num_rows=8, num_cols=8)`), other RX velocities (`rx_velocities=[20.0, 0.0, 0.0]`) or only some of the paths (`max_paths=3`, `max_bounces=0` for LoS only, `power_range_db`, `exclude_interactions`). With `save_cfr: false` in the config, the files hold only the paths. See `docs/main.pdf` for the fields. `load_cfr` needs only NumPy, so you can use the path data without Sionna RT or a GPU. For this, install only NumPy instead of `requirements.txt`, and run from the repository root (or add it to `sys.path`) so that Python finds the `src` package.
 
 This makes CSIGen datasets easy to share. With a few paths per channel, the paths typically take only a few percent of the size of the CFR. Therefore, share the files without `h` (generate with `save_cfr: false`, or remove `h` afterwards), and anyone can rebuild the exact CFR with `load_cfr`.
 
