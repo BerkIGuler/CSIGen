@@ -1,0 +1,22 @@
+name: irvine_1
+center_lon_lat:
+- -117.8235
+- 33.66
+size_m:
+- 600
+- 600
+bbox_min_lon_lat_max_lon_lat:
+- -117.82673777470812
+- 33.657305066475026
+- -117.82026222529187
+- 33.66269493352497
+lidar_terrain: true
+lidar_building_heights: true
+seed: 0
+osm_server: https://overpass-api.de/api/interpreter
+materials:
+  ground: mat-itu_wet_ground
+  rooftop: mat-itu_metal
+  wall: mat-itu_concrete
+scene_generation_version: 1.0.0
+created: '2026-10-14T13:56:56'

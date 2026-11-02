@@ -2,6 +2,17 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-11-02
+
+### Added
+
+- **Suburban and rural example scenes.** `scenes/` holds four new scenes. Two are suburban residential areas with mostly one- and two-story houses (`irvine_1` and `paloalto_1`). Two are rural towns with about 100 scattered buildings each (`aguadulce_1` and `littlerock_1`). Each scene folder also holds `scene_source.yaml`, which records how `scenegen` made the scene. It gives the center, the size, the LiDAR settings for terrain and building heights, and the materials.
+- **Example configs for these scenes.** `config/examples/suburban/` and `config/examples/rural/` hold one config per scene at 3.5 GHz, for example `irvine_3p5ghz.yaml`. These scenes have no tall buildings for the rooftop placement. Thus, the configs put the base stations on masts with `bs_positions` and `bs_mast_height`. The suburban configs use four masts of 25 m, the urban macro (UMa) default of 3GPP TR 38.901 V17.0.0, which has no suburban scenario. The rural configs use three masts of 35 m, the rural macro (RMa) default, and sample 400 users per sector instead of 200, since they have fewer base stations. The configs solve the paths in batches of 25 receivers with a specular-chain table of 2e8. These are half of the defaults, so that a run needs less GPU memory with the same table space per receiver.
+
+### Changed
+
+- **New paths of the example configs.** The old paths of the example configs no longer exist, so commands and scripts that use them must change. `config/examples/` now has one folder per scene type, `urban/`, `suburban/` and `rural/`. Each file name gives the city or town and the carrier. The 3.5 GHz city configs move from `pretrain/<city>_config.yaml` to `urban/<city>_3p5ghz.yaml`. The 28 GHz city configs move from `eval/<city>_config_test.yaml` to `urban/<city>_28ghz.yaml`. The settings in the files do not change.
+
 ## [0.3.6] - 2026-10-14
 
 ### Added

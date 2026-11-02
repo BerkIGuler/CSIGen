@@ -6,12 +6,16 @@ examples/output/*
 *.log
 *.npz
 
-# Ignore all scenes except boston_1
+# Ignore all scenes except the included ones
 scenes/*
 !scenes/boston_1/
 !scenes/chicago_1/
 !scenes/nyc_1/
 !scenes/sf_1/
 !scenes/la_1/
+!scenes/irvine_1/
+!scenes/paloalto_1/
+!scenes/aguadulce_1/
+!scenes/littlerock_1/
 
 CLAUDE.md
