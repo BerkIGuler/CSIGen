@@ -24,13 +24,13 @@
 \clearpage
 
 \section{Overview}
-CSIGen generates large wireless channel datasets with Sionna RT from a single YAML config. For a 3D city scene it places multi-sector base stations on the highest rooftops, samples users from a ray-traced radio map, traces the paths from every sector to its users, and saves per sector the channel frequency response (CFR), the paths, and the metadata needed to use and reproduce them.
+CSIGen generates large wireless channel datasets with Sionna RT from a single YAML config. For a 3D scene it places multi-sector base stations on the highest rooftops or on masts at given positions, samples users from a ray-traced radio map, traces the paths from every sector to its users, and saves per sector the channel frequency response (CFR), the paths, and the metadata needed to use and reproduce them.
 
 \subsection{Quick Start}
 Install the pinned dependencies (Python 3.12, Sionna RT 2.2.0; a CUDA GPU is strongly recommended) and run a config from the repository root:
 \begin{minted}{bash}
 pip install -r requirements.txt
-python scripts/run.py --config config/examples/eval/la_config_test.yaml
+python scripts/run.py --config config/examples/urban/la_28ghz.yaml
 \end{minted}
 The run writes \texttt{output/<scene\_name>/<YYYYmmdd\_HHMMSS>/} with one \texttt{channel\_tx\_<t>.npz} per sector and a \texttt{metadata.yaml} (Section~\ref{sec:output}). Load a file with:
 \begin{minted}{python}
@@ -39,7 +39,7 @@ z = np.load("output/la_1/<run_id>/channel_tx_0.npz", allow_pickle=True)
 h = z["h"]                       # [users, rx_ant, 1, tx_ant, ofdm_symbols, subcarriers], complex64
 meta = z["metadata"].item()      # positions, LoS labels, path statistics, config, ...
 \end{minted}
-The example configs are in \texttt{config/examples/}: \texttt{pretrain/} at 3.5\,GHz and \texttt{eval/} at 28\,GHz, for the included scenes. To split a run into train and test runs, see Section~\ref{sec:splits}.
+The example configs are in \texttt{config/examples/}, in one folder per scene type (\texttt{urban/}, \texttt{suburban/} and \texttt{rural/}). Each file name gives the city or town and the carrier, for example \texttt{boston\_3p5ghz.yaml} at 3.5\,GHz and \texttt{boston\_28ghz.yaml} at 28\,GHz. Boston, Chicago, New York and San Francisco have configs at both carriers. Los Angeles has a config at 28\,GHz only, and the suburban and rural scenes at 3.5\,GHz only. To split a run into train and test runs, see Section~\ref{sec:splits}.
 
 \subsection{Conventions}
 \begin{itemize}
@@ -63,7 +63,7 @@ The folder gets \texttt{scene.xml}, which references \texttt{.ply} meshes under 
 Buildings and ground use ITU materials (mostly \texttt{concrete} and \texttt{metal}). The ITU ground models of the scene files (\texttt{wet\_ground} and others) are defined for 1--10\,GHz only, so above 10\,GHz set \key{override\_ground\_material}. All materials have Sionna's default scattering coefficient of 0, so the scenes produce no diffuse paths, even with diffuse reflection enabled.
 
 \subsection{Available Scenes}
-The repository includes five downtown scenes under \texttt{scenes/<name>/scene.xml} (Fig.~\ref{fig:scenes}).
+The repository includes nine scenes under \texttt{scenes/<name>/scene.xml}. Five are downtown scenes (Fig.~\ref{fig:scenes}). Two are suburban scenes and two are rural scenes (Fig.~\ref{fig:scenes_suburban_rural}). The suburban scenes (\texttt{irvine\_1}, \texttt{paloalto\_1}) are residential areas with mostly one- and two-story houses. The rural scenes (\texttt{aguadulce\_1}, \texttt{littlerock\_1}) have about 100 scattered buildings each. These scenes have no tall buildings for the rooftop placement. Thus, their example configs put the base stations on masts with \key{bs\_positions} and \key{bs\_mast\_height}. The suburban configs use four masts of 25\,m, the urban macro (UMa) default of TR~38.901 V17.0.0, which has no suburban scenario. The rural configs use three masts of 35\,m, the rural macro (RMa) default. Each of these scene folders also holds \texttt{scene\_source.yaml}, which records how \texttt{scenegen} made the scene. It gives the center, the size, the LiDAR settings for terrain and building heights, and the materials.
 \begin{figure}[h]
   \centering
   \begin{subfigure}{0.32\textwidth}\includegraphics[width=\textwidth]{figures/boston_1_cm.png}\caption{\texttt{boston\_1}}\end{subfigure}
@@ -72,8 +72,18 @@ The repository includes five downtown scenes under \texttt{scenes/<name>/scene.x
 
   \begin{subfigure}{0.32\textwidth}\includegraphics[width=\textwidth]{figures/sf_1_cm.png}\caption{\texttt{sf\_1}}\end{subfigure}
   \begin{subfigure}{0.32\textwidth}\includegraphics[width=\textwidth]{figures/la_1_cm.png}\caption{\texttt{la\_1}}\end{subfigure}
-  \caption{Included scenes (Boston, Chicago, New York, San Francisco and Los Angeles downtowns).}
+  \caption{Included downtown scenes (Boston, Chicago, New York, San Francisco and Los Angeles).}
   \label{fig:scenes}
+\end{figure}
+\begin{figure}[h]
+  \centering
+  \begin{subfigure}{0.48\textwidth}\includegraphics[width=\textwidth,trim=0 83 0 110,clip]{figures/irvine_1_3d.png}\caption{\texttt{irvine\_1} (suburban)}\end{subfigure}
+  \begin{subfigure}{0.48\textwidth}\includegraphics[width=\textwidth,trim=0 83 0 110,clip]{figures/paloalto_1_3d.png}\caption{\texttt{paloalto\_1} (suburban)}\end{subfigure}
+
+  \begin{subfigure}{0.48\textwidth}\includegraphics[width=\textwidth,trim=0 83 0 110,clip]{figures/aguadulce_1_3d.png}\caption{\texttt{aguadulce\_1} (rural)}\end{subfigure}
+  \begin{subfigure}{0.48\textwidth}\includegraphics[width=\textwidth,trim=0 83 0 110,clip]{figures/littlerock_1_3d.png}\caption{\texttt{littlerock\_1} (rural)}\end{subfigure}
+  \caption{Included suburban and rural scenes, at true vertical scale, with the base stations of the example configs (red, on masts).}
+  \label{fig:scenes_suburban_rural}
 \end{figure}
 
 \clearpage
@@ -194,7 +204,7 @@ Only what the comments above do not say is listed here.
   \item[Interaction toggles.] The \texttt{radio\_map\_*} and \texttt{path\_solver\_*} flags (reflection, refraction, diffraction, depth, samples, seed) are separate, so the radio map, which only places users, can be cheaper than the path solve. See the \href{https://arxiv.org/abs/2504.21719}{Sionna RT technical report} for their meaning. Diffuse reflection has no effect with the included scenes (Section~\ref{sec:materials}).
   \item[User sampling.] \key{num\_user\_samples\_per\_tx} is a maximum: a sector with fewer valid cells gets fewer users, possibly none. The radio-map metric is per sector.
   \item[Mobility.] \key{mobility\_preset} must be one of the seven preset names shown. \texttt{orientation\_mode}: \texttt{random} (yaw uniform, pitch within $\pm 30^\circ$, roll within $\pm 45^\circ$) or \texttt{to\_tx} (the array faces the user's sector). \texttt{speed\_distribution}: none (stationary), \texttt{pedestrian} (0.5--2\,m/s), \texttt{vehicular} (8--30\,m/s) or \texttt{uniform\_continuous} between \texttt{speed\_min} and \texttt{speed\_max}; the direction is uniform in the horizontal plane. Users do not move during a run; the velocity only sets the Doppler shifts.
-  \item[Path solver.] \key{path\_solver\_synthetic\_array: true} traces rays from the array centres only and adds the phase of each element analytically; it is much faster and required for the path data (Section~\ref{sec:paths}). \key{path\_solver\_per\_tx\_users\_only: false} solves every sector for all users of the scene, so each user appears in every sector's file. \key{path\_solver\_rx\_batch\_size} and \key{path\_solver\_spec\_table\_size} avoid silent path loss (Section~\ref{sec:pipeline}); their defaults are 50 and $4 \cdot 10^8$. Without a synthetic array, the table keeps Sionna's default ($10^6$), since every TX antenna is a source; batching then needs \key{cfr\_out\_type: numpy}, so with another output type the receivers are solved at once, with a warning. The validator rejects settings whose table indices exceed Sionna's 32-bit range: $\max(\textrm{table size}, \texttt{max\_num\_paths\_per\_src})$ times the number of sources (1 with a synthetic array, else the number of TX antennas) must stay below $2^{32}$.
+  \item[Path solver.] \key{path\_solver\_synthetic\_array: true} traces rays from the array centres only and adds the phase of each element analytically; it is much faster and required for the path data (Section~\ref{sec:paths}). \key{path\_solver\_per\_tx\_users\_only: false} solves every sector for all users of the scene, so each user appears in every sector's file. \key{path\_solver\_rx\_batch\_size} and \key{path\_solver\_spec\_table\_size} avoid silent path loss (Section~\ref{sec:pipeline}); their defaults are 50 and $4 \cdot 10^8$. The table space per receiver is about the table size divided by the batch size, $8 \cdot 10^6$ at the defaults. To save GPU memory, lower both keys by the same factor, so that this ratio stays the same. A smaller batch then needs less memory but makes the run slower. For example, the suburban and rural example configs use 25 and $2 \cdot 10^8$. Without a synthetic array, the table keeps Sionna's default ($10^6$), since every TX antenna is a source; batching then needs \key{cfr\_out\_type: numpy}, so with another output type the receivers are solved at once, with a warning. The validator rejects settings whose table indices exceed Sionna's 32-bit range: $\max(\textrm{table size}, \texttt{max\_num\_paths\_per\_src})$ times the number of sources (1 with a synthetic array, else the number of TX antennas) must stay below $2^{32}$.
   \item[CFR.] \key{cfr\_out\_type} (\texttt{numpy}, \texttt{tf}, \texttt{torch}, \texttt{jax} or \texttt{drjit}) applies only without a synthetic array, where Sionna computes the CFR; with batching it must be \texttt{numpy}.
   \item[Saved data.] \key{save\_paths} requires a synthetic array. With \key{save\_cfr: false}, the files hold only the paths, from which \texttt{load\_cfr} rebuilds the CFR exactly. At least one of the two must be true.
   \item[Receivers of an earlier run.] \key{receivers\_from} (optional) is the directory of an earlier run, with its \texttt{channel\_tx\_*.npz} files. Its users are solved again, with their names, positions, velocities and orientations, instead of sampling new ones, so that the two runs hold channels of the same users, for example at two carrier frequencies or with two arrays. The scene and the base stations must be those of the earlier run: the same scene contents (compared by \texttt{scene\_sha256}, or by the earlier run's scene file for runs before 0.3.6), the same scene-setup and base-station keys, and the same sectors at the same positions and orientations; any difference is an error. The radio map, user sampling and mobility keys are still required by the validator but ignored, and a warning says so. The earlier run must be a full run of CSIGen 0.3.3 or later, not the output of the split script. Users that had no path to any sector in the earlier run are not in its files and are left out; \texttt{users\_per\_tx} and \texttt{total\_users} in the metadata stay those of the earlier run, so that the user indices and serving sectors keep their meaning.
@@ -377,7 +387,7 @@ python scripts/split_dataset.py --run output/<scene_name>/<run_id> --out <out_di
 
 \clearpage
 \section{Examples}
-The figures of this section come from \texttt{config/examples/eval/la\_config\_test.yaml} (Los Angeles, 28\,GHz, all users in every sector's file; 20{,}310 channels, 33\% LoS) and are made by \texttt{docs/figures/make\_example\_figures.py} from the run. Fig.~\ref{fig:example_stats} shows the path statistics of all channels: most channels have a few paths (median 4). Fig.~\ref{fig:example_cfr} shows the CFR of one NLoS channel with 6 paths and a user at 29\,m/s: the strongest paths arrive from opposite directions with Doppler shifts of about $+1.7$ and $-1.9$\,kHz, so the channel fades over the 14 symbols.
+The figures of this section come from a run of \texttt{config/examples/urban/la\_28ghz.yaml} (Los Angeles, 28\,GHz). Each sector's file of this run holds all users. The run has 20{,}310 channels in total, and 33\% of them are LoS. \texttt{docs/figures/make\_example\_figures.py} makes the figures from the run. Fig.~\ref{fig:example_stats} shows the path statistics of all channels. Most channels have a few paths (median 4). Fig.~\ref{fig:example_cfr} shows the CFR of one NLoS channel with 6 paths and a user at 29\,m/s. Its strongest paths arrive from opposite directions with Doppler shifts of about $+1.7$ and $-1.9$\,kHz, so the channel fades over the 14 symbols.
 
 \begin{figure}[htbp]
   \centering
@@ -398,7 +408,7 @@ The figures of this section come from \texttt{config/examples/eval/la\_config\_t
 \begin{itemize}
   \item \textbf{Determinism.} Sionna's GPU ray tracing is not bit-identical between runs: two runs of the same config can differ by up to about 1\% per channel, occasionally more when a path is found in one run and not the other, and a few radio-map cells near the thresholds can change validity. Each file records the config and the CSIGen version.
   \item \textbf{Precision.} Delays and angles are float32 (Section~\ref{sec:paths}).
-  \item \textbf{Memory.} Without a synthetic array, every TX antenna is a separate source, which can exceed a 12\,GB GPU after a few sectors; the synthetic array avoids this.
+  \item \textbf{Memory.} Without a synthetic array, every TX antenna is a separate source, which can exceed the GPU memory after a few sectors. The synthetic array avoids this.
   \item \textbf{Static scene.} Users have velocities but do not move; each channel is one snapshot of \key{num\_ofdm\_symbols} symbols.
   \item \textbf{Diffuse scattering.} The included scenes have no diffuse paths (Section~\ref{sec:materials}).
 \end{itemize}

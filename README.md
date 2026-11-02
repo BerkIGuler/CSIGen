@@ -1,8 +1,6 @@
 # CSIGen
 
-Config-driven wireless channel dataset generation built on **Sionna RT**. This README is short on purpose. Use the sections below in order. Or, jump to **`docs/main.pdf`** for the full manual.
-
-## A sample dataset generated with this tool can be found [here](https://huggingface.co/datasets/BerkIGuler/PilotWiMAEDataset/). This dataset was used in the [PilotWiMAE paper](https://arxiv.org/abs/2605.22856).
+Config-driven, easy-to-use wireless channel dataset generator built on **Sionna RT**. Use the sections below in order, or jump to `docs/main.pdf` for the full manual.
 
 ## Generating channels from a config
 
@@ -24,6 +22,8 @@ h = load_cfr("output/<scene_name>/<run_id>/channel_tx_0.npz")
 ```
 
 `load_cfr` also takes another numerology (`num_subcarriers`, `subcarrier_spacing`, `num_ofdm_symbols`, `symbol_duration`), other planar arrays (`tx_array=dict(num_rows=8, num_cols=8)`), other RX velocities (`rx_velocities=[20.0, 0.0, 0.0]`) or only some of the paths (`max_paths=3`, `max_bounces=0` for LoS only, `power_range_db`, `exclude_interactions`). With `save_cfr: false` in the config, the files hold only the paths. See `docs/main.pdf` for the fields.
+
+This makes CSIGen datasets easy to share. With a few paths per channel, the paths typically take only a few percent of the size of the CFR. Therefore, share the files without `h` (generate with `save_cfr: false`, or remove `h` afterwards), and anyone can rebuild the exact CFR with `load_cfr`.
 
 ## Splitting a run into train and test
 
@@ -56,7 +56,7 @@ Throughput improves substantially when **Sionna RT / Mitsuba** runs with a suppo
 
 ## Documentation
 
-Read **`docs/main.pdf`** for:
+Read `docs/main.pdf` for:
 
 - Full **YAML configuration reference** (every parameter and allowed values).
 - How **scene generation** (Geo2SigMap / `scenegen`) ties into CSIGen.
@@ -70,17 +70,18 @@ Rebuild the PDF manual from source if needed:
 
 ## Purpose and scope
 
-CSIGen is a **pipeline for producing large-scale wireless channel datasets** aimed at **training and evaluating wireless physical-layer AI models**. It builds on NVIDIA’s **Sionna** ray-tracing primitives but exposes a **single config file** to drive scene setup, sampling, solvers, and CSI export so you can scale generation without touching core code for each experiment. Configuration is documented in depth in **`docs/main.pdf`**.
+CSIGen is a **pipeline for producing large-scale wireless channel datasets** aimed at **training and evaluating wireless physical-layer AI models**. It builds on NVIDIA’s **Sionna** ray-tracing primitives but exposes a **single config file** to drive scene setup, sampling, solvers, and CSI export so you can scale generation without touching core code for each experiment. Configuration is documented in depth in `docs/main.pdf`.
 
-This project is released **publicly** to help accelerate **wireless AI research**. **Feedback, issues, and fixes are welcome.**
+This project is released **publicly** to help accelerate **wireless AI research**. **Feedback, issues, and fixes are welcome.** If you need a new feature or have a question about using CSIGen, please [open an issue](https://github.com/BerkIGuler/CSIGen/issues).
 
 ## Repository layout
 
 ```
 ├── src/              # Library: scene setup, radio map / path solvers, path data, CFR, config validation
 ├── config/           # YAML configs; examples under examples/
-│                     #   (eval/ and pretrain/ city configs)
-├── scenes/           # Example scenes: <city>_1/scene.xml (+ meshes referenced there)
+│                     #   (urban/, suburban/ and rural/, for example urban/boston_3p5ghz.yaml)
+├── scenes/           # Example scenes, each with <name>_1/scene.xml and its meshes. Five downtowns,
+│                     #   two suburban (irvine_1, paloalto_1) and two rural (aguadulce_1, littlerock_1)
 ├── scripts/          # run.py, split_dataset.py, compile_docs.sh, and other CLI helpers
 ├── docs/             # main.tex and build script for the PDF manual (main.pdf); changelog.md
 ├── examples/         # Notebooks (paths assume repo root on sys.path like scripts/run.py)
@@ -92,6 +93,10 @@ This project is released **publicly** to help accelerate **wireless AI research*
 ├── LICENSE
 └── README.md
 ```
+
+## A sample dataset generated with this tool can be found [here](https://huggingface.co/datasets/BerkIGuler/ChaSEDatasets/).
+
+It holds runs of eight scenes of `scenes/` at 3.5 GHz, all of them except `la_1`. The urban runs were made with CSIGen 0.3.4, and the suburban and rural runs with 0.3.6. The runs are in `runs/<scene type>/<scene>/`. The CFR `h` was removed from the files after generation to keep the shared files small. Rebuild it with `load_cfr` (see "Path data" above) if you need it. This dataset was generated to demonstrate a tool that we developed, [ChaSE](https://github.com/BerkIGuler/ChaSE), so it also holds a few other files, such as data splits.
 
 ## License
 
