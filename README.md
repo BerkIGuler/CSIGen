@@ -85,7 +85,7 @@ This project is released **publicly** to help accelerate **wireless AI research*
 ├── scripts/          # run.py, split_dataset.py, compile_docs.sh, and other CLI helpers
 ├── docs/             # main.tex and build script for the PDF manual (main.pdf); changelog.md
 ├── examples/         # Notebooks (paths assume repo root on sys.path like scripts/run.py)
-│   ├── CSIGen/       # Notebooks that call run.py and visualize saved output
+│   ├── CSIGen/       # Notebooks that generate and plot small runs, and one that rebuilds the CFR from saved path data
 │   └── sionna/       # Smaller Sionna RT scene previews (empty / tutorial-style)
 ├── output/           # Timestamped channel runs: output/<scene_name>/<run_id>/ …
 │                     #   (created by run.py; ignored by git by default—see .gitignore)
@@ -96,7 +96,7 @@ This project is released **publicly** to help accelerate **wireless AI research*
 
 ## A sample dataset generated with this tool can be found [here](https://huggingface.co/datasets/BerkIGuler/ChaSEDatasets/).
 
-It holds runs of eight scenes of `scenes/` at 3.5 GHz, all of them except `la_1`. The urban runs were made with CSIGen 0.3.4, and the suburban and rural runs with 0.3.6. The runs are in `runs/<scene type>/<scene>/`. The CFR `h` was removed from the files after generation to keep the shared files small. Rebuild it with `load_cfr` (see "Path data" above) if you need it. This dataset was generated to demonstrate a tool that we developed, [ChaSE](https://github.com/BerkIGuler/ChaSE), so it also holds a few other files, such as data splits.
+It holds runs of eight scenes of `scenes/` at 3.5 GHz, all of them except `la_1`. The urban runs were made with CSIGen 0.3.4, and the suburban and rural runs with 0.3.6. The runs are in `runs/<scene type>/<scene>/`. The CFR `h` was removed from the files after generation to keep the shared files small. Rebuild it with `load_cfr` (see "Path data" above, and `examples/CSIGen/rebuild_cfr_from_paths.ipynb` for a worked example on one file of this dataset) if you need it. This dataset was generated to demonstrate a tool that we developed, [ChaSE](https://github.com/BerkIGuler/ChaSE), so it also holds a few other files, such as data splits.
 
 ## License
 
