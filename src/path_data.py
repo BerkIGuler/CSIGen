@@ -77,9 +77,17 @@ INTERACTION_TYPES = {
     "diffraction": 8,
 }
 
-# Largest number of elements of the [channels, paths, symbols, subcarriers]
-# phase array per step of cfr_from_paths, to bound memory (2^24 complex128
-# values are 256 MB)
+# Largest number of elements of each array of a chunk of several channels in
+# cfr_from_paths, to bound memory (2^22 complex128 values are 64 MB). It
+# covers the [channels, paths, symbols, subcarriers] phase array, the
+# [channels, rx_ant, tx_ant, paths] coefficients and the
+# [channels, rx_ant, tx_ant, symbols, subcarriers] output of the chunk. A
+# single channel whose arrays exceed it forms a chunk alone
+_CFR_CHUNK_ELEMENTS = 2 ** 22
+
+# Largest number of elements of the phase array of a single channel. A
+# channel with more paths is summed in blocks of paths. Changing it changes
+# how the paths of such a channel are summed, and thus the last bits of its CFR
 _CFR_MAX_ELEMENTS = 2 ** 24
 
 # Speed of light (m/s), as in Sionna RT
@@ -287,15 +295,22 @@ def cfr_from_paths(
     counts = np.diff(offsets)
 
     grid = num_ofdm_symbols * num_subcarriers
+    if grid == 0:
+        return h
+    num_ant = num_rx_ant * num_tx_ant
+
+    def chunk_elements(n, p):
+        # Largest array of a chunk of n channels padded to p paths
+        return n * max(p * grid, num_ant * grid, num_ant * p)
+
     start = 0
     while start < num_ch:
-        # Add channels while the padded phase array stays within the bound
+        # Add channels while every array of the chunk stays within the bound
         stop, p_max = start + 1, int(counts[start])
-        while stop < num_ch and (stop + 1 - start) * max(p_max, int(counts[stop])) * grid <= _CFR_MAX_ELEMENTS:
+        while stop < num_ch and chunk_elements(stop + 1 - start, max(p_max, int(counts[stop]))) <= _CFR_CHUNK_ELEMENTS:
             p_max = max(p_max, int(counts[stop]))
             stop += 1
         n = stop - start
-        h_chunk = np.zeros((n, num_rx_ant, num_tx_ant, num_ofdm_symbols, num_subcarriers), dtype=np.complex128)
         if p_max > 0:
             # Pad the paths of the chunk to [n, p_max]; padded paths have a = 0
             sel = np.arange(offsets[start], offsets[stop])
@@ -312,17 +327,33 @@ def cfr_from_paths(
                 np.minimum.at(first, row, tau[row, col])
                 tau[row, col] -= first[row]
             a = a * np.exp(-2j * np.pi * fc * tau)[:, None, None, :]
-            # A single channel with very many paths is summed in blocks of paths
-            block = max(1, _CFR_MAX_ELEMENTS // (n * grid))
+            # A chunk of several channels is summed in one block of paths. A single
+            # channel with very many paths is summed in blocks of paths (see
+            # _CFR_MAX_ELEMENTS)
+            block = max(1, _CFR_MAX_ELEMENTS // grid) if n == 1 else p_max
             for p0 in range(0, p_max, block):
                 p1 = min(p0 + block, p_max)
                 phase = (2 * np.pi * nu[:, p0:p1, None, None] * times[None, None, :, None]
                          - 2 * np.pi * freqs[None, None, None, :] * tau[:, p0:p1, None, None])
-                h_chunk += np.einsum("rqep,rptf->rqetf", a[..., p0:p1], np.exp(1j * phase))
+                # exp(j phase) in place, without another array of the same size
+                rotation = 1j * phase
+                del phase
+                np.exp(rotation, out=rotation)
+                part = np.einsum("rqep,rptf->rqetf", a[..., p0:p1], rotation)
+                del rotation
+                if p0 == 0:
+                    # Same bits as adding the first block to zeros (0 + x turns -0 into +0)
+                    h_chunk = part
+                    h_chunk += 0
+                else:
+                    h_chunk += part
+                del part
+        else:
+            h_chunk = np.zeros((n, num_rx_ant, num_tx_ant, num_ofdm_symbols, num_subcarriers), dtype=np.complex128)
         if normalize:
             c = np.mean(np.abs(h_chunk) ** 2, axis=(1, 2, 3, 4))
             scale = np.where(c > 0, 1 / np.sqrt(np.where(c > 0, c, 1)), 0)
-            h_chunk = h_chunk * scale[:, None, None, None, None]
+            h_chunk *= scale[:, None, None, None, None]
         h[start:stop, :, 0] = h_chunk
         start = stop
     return h

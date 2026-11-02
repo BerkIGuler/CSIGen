@@ -2,6 +2,13 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] - 2026-11-02
+
+### Fixed
+
+- **Less memory for `load_cfr` and `cfr_from_paths`.** Both compute the CFR in chunks of channels. Before, the bound of a chunk counted only its phase array, not the antennas, so the output of a chunk could be many times larger than the phase array. The phase rotation also used one more temporary array. Thus, rebuilding a CFR could need several times its own size in memory. Now each array of a chunk of several channels, the output included, stays within 2^22 values (64 MB), so a chunk needs a few hundred MB at most. The rotation, the first sum and the normalization are computed in place. The peak memory of a rebuild is now about the size of its result plus a few hundred MB, and a rebuild takes less time. The CFR does not change. With the NumPy version of `requirements.txt`, it has the same bits as with the earlier versions, so for files whose `h` was computed from the paths (`cfr_source: cfr_from_paths`), `load_cfr` still returns the saved `h` bit for bit.
+- **Empty grid.** `cfr_from_paths` with no OFDM symbols or no subcarriers now returns an empty CFR. Before, it failed with a division by zero when a channel had paths.
+
 ## [0.4.1] - 2026-11-02
 
 ### Changed
