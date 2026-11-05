@@ -1,0 +1,31 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      # The tests read saved data and configs, which need neither Sionna RT nor a GPU.
+      # Install only those packages, at the versions of requirements.txt, and stop if one is missing there.
+      - run: |
+          pins=$(grep -E '^(numpy|PyYAML|pydantic)==' requirements.txt || true)
+          [ "$(echo "$pins" | wc -l)" -eq 3 ] || { echo "requirements.txt must pin numpy, PyYAML and pydantic"; exit 1; }
+          pip install $pins "pytest>=8,<9"
+      - run: pytest
