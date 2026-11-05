@@ -54,6 +54,17 @@ We tested Sionna RT 2.2.0 on the GPU with NVIDIA driver 580, and it works.
 
 Throughput improves substantially when **Sionna RT / Mitsuba** runs with a supported **GPU** (and matching **CUDA/driver** toolchain). Misconfiguration can cause errors or quiet fallback to slower paths.
 
+### Tests
+
+The tests check the path data, `load_cfr`, the config validation and the splits on small synthetic runs. They need only NumPy, PyYAML, pydantic and pytest, not Sionna RT or a GPU. Install pytest in addition to the requirements above, or only the four packages for a light environment, and run the tests from the repository root.
+
+```bash
+pip install pytest      # or pip install numpy pyyaml pydantic pytest
+pytest
+```
+
+The tests also run for each pull request.
+
 ## Documentation
 
 Read `docs/main.pdf` for:
@@ -84,6 +95,7 @@ This project is released **publicly** to help accelerate **wireless AI research*
 │                     #   two suburban (irvine_1, paloalto_1) and two rural (aguadulce_1, littlerock_1)
 ├── scripts/          # run.py, split_dataset.py, compile_docs.sh, and other CLI helpers
 ├── docs/             # main.tex and build script for the PDF manual (main.pdf); changelog.md
+├── tests/            # Tests that run without Sionna RT or a GPU (pytest)
 ├── examples/         # Notebooks (paths assume repo root on sys.path like scripts/run.py)
 │   ├── CSIGen/       # Notebooks that generate and plot small runs, and one that rebuilds the CFR from saved path data
 │   └── sionna/       # Smaller Sionna RT scene previews (empty / tutorial-style)

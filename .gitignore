@@ -1,10 +1,12 @@
 **/__pycache__/
 **/.ipynb_checkpoints/
+.pytest_cache/
 output/*
 examples/output/*
 *.DS_Store
 *.log
 *.npz
+!tests/data/*.npz
 
 # Ignore all scenes except the included ones
 scenes/*
