@@ -119,6 +119,7 @@ This project is released **publicly** to help accelerate **wireless AI research*
 ├── output/           # Timestamped channel runs: output/<scene_name>/<run_id>/ …
 │                     #   (created by csigen-run; ignored by git by default, see .gitignore)
 ├── pyproject.toml    # Package, dependencies, extras, commands and test settings
+├── AGENTS.md         # Pointers and rules for contributors
 ├── LICENSE
 └── README.md
 ```
