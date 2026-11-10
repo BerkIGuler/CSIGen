@@ -2,7 +2,7 @@ import pytest
 import yaml
 
 from helpers import REPO
-from src.config_validator import load_validated_config, validate_config
+from csigen.config_validator import load_validated_config, validate_config
 
 EXAMPLES = sorted((REPO / "config" / "examples").rglob("*.yaml"))
 

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "csigen"
+dynamic = ["version"]
+description = "Config-driven generator of wireless channel datasets, built on Sionna RT."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Berkay Guler" }]
+requires-python = ">=3.12"
+# The base install reads saved path data (load_cfr), validates configs and splits runs, without Sionna RT
+dependencies = [
+    "numpy>=2.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.0,<3",
+]
+
+[project.optional-dependencies]
+# Channel generation (ray tracing). The versions are those CSIGen is tested with
+rt = [
+    "sionna-rt==2.2.0",
+    "mitsuba==3.9.1",
+    "matplotlib>=3.10",
+]
+test = ["pytest>=8,<9"]
+examples = ["jupyter", "matplotlib>=3.10"]
+
+[project.scripts]
+csigen-run = "csigen.cli:run_main"
+csigen-split = "csigen.cli:split_main"
+
+[project.urls]
+Repository = "https://github.com/BerkIGuler/CSIGen"
+
+[tool.setuptools.dynamic]
+version = { attr = "csigen.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["csigen*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

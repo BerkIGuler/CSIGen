@@ -2,7 +2,7 @@
 Make the example figures of the manual (docs/main.tex, section Examples) from a run.
 
 The figures in the manual come from config/examples/urban/la_28ghz.yaml:
-  python scripts/run.py --config config/examples/urban/la_28ghz.yaml
+  csigen-run --config config/examples/urban/la_28ghz.yaml
   python docs/figures/make_example_figures.py --run output/la_1/<run_id>
 """
 

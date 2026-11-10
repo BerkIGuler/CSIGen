@@ -21,3 +21,6 @@ scenes/*
 !scenes/littlerock_1/
 
 CLAUDE.md
+*.egg-info/
+build/
+dist/

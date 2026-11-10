@@ -1,14 +1,14 @@
+import shlex
 import subprocess
-import sys
 
 import numpy as np
 import pytest
 import yaml
 
-from helpers import REPO, serving_map, write_run
-from src.path_data import load_cfr
-from src.split import (DROPPED, TEST, TRAIN, drop_split_positions, read_run_index, split_txs, split_users_area,
-                       split_users_random, write_split)
+from helpers import command, serving_map, write_run
+from csigen.path_data import load_cfr
+from csigen.split import (DROPPED, TEST, TRAIN, drop_split_positions, read_run_index, split_txs, split_users_area,
+                          split_users_random, write_split)
 
 
 def read_side(out, side):
@@ -137,14 +137,15 @@ def test_empty_sectors_are_never_test():
     (["--by", "bs", "--disjoint-users"], "test_base_stations"),
     (["--by", "area", "--block-size", "100", "--guard", "10"], "test_blocks"),
 ])
-def test_split_script(run_dir, tmp_path, args, test_key):
+def test_split_command(run_dir, tmp_path, args, test_key):
     out = tmp_path / "split"
-    cmd = [sys.executable, str(REPO / "scripts" / "split_dataset.py"), "--run", str(run_dir), "--out", str(out),
+    cmd = [command("csigen-split"), "--run", str(run_dir), "--out", str(out),
            "--seed", "1", *args]
     res = subprocess.run(cmd, capture_output=True, text=True)
     assert res.returncode == 0, res.stderr
     info = read_side(out, "test")[1]
     assert info["method"] == args[1] and info[test_key]
+    assert info["split_by"]["command"] == shlex.join(["csigen-split", *cmd[1:]])
     total = info["num_channels"]["train"] + info["num_channels"]["test"] + info["num_channels_dropped"]
     assert total == sum(map(len, read_run_index(run_dir)["rows"].values()))
     if args[1] != "sector":                         # the user is on one side only

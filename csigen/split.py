@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 import yaml
 
-from src.path_data import PATH_KEYS, slice_path_data
+from csigen.path_data import PATH_KEYS, slice_path_data
 
 logger = logging.getLogger(__name__)
 

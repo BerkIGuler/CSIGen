@@ -7,7 +7,7 @@ from sionna.rt import ITURadioMaterial, load_scene, transform_mesh
 from typing import Tuple, Optional, Any
 import logging
 
-from src.utils import (
+from csigen.utils import (
     extract_building_positions_from_scene,
     get_antenna_positions,
     get_mast_antenna_positions,

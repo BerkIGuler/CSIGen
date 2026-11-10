@@ -27,11 +27,12 @@
 CSIGen generates large wireless channel datasets with Sionna RT from a single YAML config. For a 3D scene it places multi-sector base stations on the highest rooftops or on masts at given positions, samples users from a ray-traced radio map, traces the paths from every sector to its users, and saves per sector the channel frequency response (CFR), the paths, and the metadata needed to use and reproduce them.
 
 \subsection{Quick Start}
-Install the pinned dependencies (Python 3.12, Sionna RT 2.2.0; a CUDA GPU is strongly recommended) and run a config from the repository root:
+Install CSIGen with pip from the root of the repository, with the extra \texttt{rt} for channel generation. It installs Sionna RT 2.2.0 and Mitsuba 3.9.1, and a CUDA GPU is strongly recommended. Then run a config from the repository root with the command \texttt{csigen-run}. The example configs give the scene files relative to the repository root.
 \begin{minted}{bash}
-pip install -r requirements.txt
-python scripts/run.py --config config/examples/urban/la_28ghz.yaml
+pip install -e ".[rt]"
+csigen-run --config config/examples/urban/la_28ghz.yaml
 \end{minted}
+The base install (\texttt{pip install -e .}) needs only NumPy, PyYAML and pydantic. It is enough to read saved path data (Section~\ref{sec:paths}), to validate configs and to split runs, without Sionna RT or a GPU. CSIGen needs Python 3.12 or later. The extra \texttt{rt} pins Sionna RT and Mitsuba. The other dependencies are lower bounds, so pip can install newer versions. The README lists the tested versions and the command that installs them.
 The run writes \texttt{output/<scene\_name>/<YYYYmmdd\_HHMMSS>/} with one \texttt{channel\_tx\_<t>.npz} per sector and a \texttt{metadata.yaml} (Section~\ref{sec:output}). Load a file with:
 \begin{minted}{python}
 import numpy as np
@@ -89,7 +90,7 @@ The repository includes nine scenes under \texttt{scenes/<name>/scene.xml}. Five
 \clearpage
 \section{Configuration}
 \label{sec:config}
-A run is fully defined by one YAML file. All keys are required except those marked optional below; \texttt{load\_validated\_config(path)} (\texttt{src.config\_validator}) checks types, ranges and combinations before anything runs. A complete example:
+A run is fully defined by one YAML file. All keys are required except those marked optional below; \texttt{load\_validated\_config(path)} (\texttt{csigen.config\_validator}) checks types, ranges and combinations before anything runs. A complete example:
 
 \begin{minted}[frame=single, framesep=1mm, bgcolor=lightgray!20, linenos, label=config.yaml]{yaml}
 # Scene
@@ -206,14 +207,14 @@ Only what the comments above do not say is listed here.
   \item[Mobility.] \key{mobility\_preset} must be one of the seven preset names shown. \texttt{orientation\_mode}: \texttt{random} (yaw uniform, pitch within $\pm 30^\circ$, roll within $\pm 45^\circ$) or \texttt{to\_tx} (the array faces the user's sector). \texttt{speed\_distribution}: none (stationary), \texttt{pedestrian} (0.5--2\,m/s), \texttt{vehicular} (8--30\,m/s) or \texttt{uniform\_continuous} between \texttt{speed\_min} and \texttt{speed\_max}; the direction is uniform in the horizontal plane. Users do not move during a run; the velocity only sets the Doppler shifts.
   \item[Path solver.] \key{path\_solver\_synthetic\_array: true} traces rays from the array centres only and adds the phase of each element analytically; it is much faster and required for the path data (Section~\ref{sec:paths}). \key{path\_solver\_per\_tx\_users\_only: false} solves every sector for all users of the scene, so each user appears in every sector's file. \key{path\_solver\_rx\_batch\_size} and \key{path\_solver\_spec\_table\_size} avoid silent path loss (Section~\ref{sec:pipeline}); their defaults are 50 and $4 \cdot 10^8$. The table space per receiver is about the table size divided by the batch size, $8 \cdot 10^6$ at the defaults. To save GPU memory, lower both keys by the same factor, so that this ratio stays the same. A smaller batch then needs less memory but makes the run slower. For example, the suburban and rural example configs use 25 and $2 \cdot 10^8$. Without a synthetic array, the table keeps Sionna's default ($10^6$), since every TX antenna is a source; batching then needs \key{cfr\_out\_type: numpy}, so with another output type the receivers are solved at once, with a warning. The validator rejects settings whose table indices exceed Sionna's 32-bit range: $\max(\textrm{table size}, \texttt{max\_num\_paths\_per\_src})$ times the number of sources (1 with a synthetic array, else the number of TX antennas) must stay below $2^{32}$.
   \item[CFR.] \key{cfr\_out\_type} (\texttt{numpy}, \texttt{tf}, \texttt{torch}, \texttt{jax} or \texttt{drjit}) applies only without a synthetic array, where Sionna computes the CFR; with batching it must be \texttt{numpy}.
-  \item[Saved data.] \key{save\_paths} requires a synthetic array. With \key{save\_cfr: false}, the files hold only the paths, from which \texttt{load\_cfr} rebuilds the CFR exactly. At least one of the two must be true.
+  \item[Saved data.] \key{save\_paths} requires a synthetic array. With \key{save\_cfr: false}, the files hold only the paths, from which \texttt{load\_cfr} rebuilds the CFR. At least one of the two must be true.
   \item[Receivers of an earlier run.] \key{receivers\_from} (optional) is the directory of an earlier run, with its \texttt{channel\_tx\_*.npz} files. Its users are solved again, with their names, positions, velocities and orientations, instead of sampling new ones, so that the two runs hold channels of the same users, for example at two carrier frequencies or with two arrays. The scene and the base stations must be those of the earlier run: the same scene contents (compared by \texttt{scene\_sha256}, or by the earlier run's scene file for runs before 0.3.6), the same scene-setup and base-station keys, and the same sectors at the same positions and orientations; any difference is an error. The radio map, user sampling and mobility keys are still required by the validator but ignored, and a warning says so. The earlier run must be a full run of CSIGen 0.3.3 or later, not the output of the split script. Users that had no path to any sector in the earlier run are not in its files and are left out; \texttt{users\_per\_tx} and \texttt{total\_users} in the metadata stay those of the earlier run, so that the user indices and serving sectors keep their meaning.
 \end{description}
 
 \clearpage
 \section{How a Run Works}
 \label{sec:pipeline}
-\texttt{scripts/run.py} calls \texttt{generate\_channels(config)} (\texttt{src.channel\_generator}), which runs these steps.
+\texttt{csigen-run} calls \texttt{generate\_channels(config)} (\texttt{csigen.channel\_generator}), which runs these steps.
 
 \paragraph{1. Scene setup.} The scene is loaded at \key{carrier\_frequency}. With \key{clip\_terrain\_to\_buildings}, the ground is clipped to the bounding box of the buildings plus \key{terrain\_clip\_margin}, so that users are not placed in empty land around the city (Fig.~\ref{fig:scene_clip}). The clipped ground, raised by \key{user\_shift\_from\_ground}, is the measurement surface on which users are placed.
 
@@ -229,7 +230,7 @@ Only what the comments above do not say is listed here.
 
 \paragraph{7. Valid channels and LoS labels.} A user without any path of positive delay has no channel to the sector and is dropped from its file. A kept channel is LoS (\texttt{los\_binary} = 1) if it has a path without any interaction.
 
-\paragraph{8. Paths and CFR.} With a synthetic array, the paths of every kept channel are collected (Section~\ref{sec:paths}), and the CFR is computed from them. Without one, Sionna's \texttt{Paths.cfr} computes the CFR and no paths are saved. The results are streamed: \texttt{generate\_channels} yields one item per sector, and \texttt{run.py} writes its file before the next sector is solved.
+\paragraph{8. Paths and CFR.} With a synthetic array, the paths of every kept channel are collected (Section~\ref{sec:paths}), and the CFR is computed from them. Without one, Sionna's \texttt{Paths.cfr} computes the CFR and no paths are saved. The results are streamed: \texttt{generate\_channels} yields one item per sector, and \texttt{csigen-run} writes its file before the next sector is solved.
 
 \begin{figure}[htbp]
   \centering
@@ -298,7 +299,7 @@ Key & Content \\
 \end{center}
 
 \subsection{Python API}
-\texttt{generate\_channels(config)} is an iterator with one dictionary per sector: \texttt{tx\_idx}, \texttt{tx\_name}, \texttt{h\_tx} (\texttt{None} with \key{save\_cfr: false}), \texttt{path\_data} (\texttt{None} without saved paths) and \texttt{tx\_metadata}. \texttt{save\_channel\_data} (\texttt{src.channel}) writes one item as a file.
+\texttt{generate\_channels(config)} is an iterator with one dictionary per sector: \texttt{tx\_idx}, \texttt{tx\_name}, \texttt{h\_tx} (\texttt{None} with \key{save\_cfr: false}), \texttt{path\_data} (\texttt{None} without saved paths) and \texttt{tx\_metadata}. \texttt{save\_channel\_data} (\texttt{csigen.channel}) writes one item as a file.
 
 \clearpage
 \section{Path Data}
@@ -324,16 +325,16 @@ Key & Shape and type & Content \\
 $P$ is the number of paths of the file, $N_\mathrm{rx}$ and $N_\mathrm{tx}$ the numbers of antennas (in the order of the CFR) and $D$ = \key{path\_solver\_max\_depth}. The coefficients are passband, unitless and include the antenna patterns. Interaction codes: 0 none, 1 specular reflection, 2 diffuse reflection, 4 refraction, 8 diffraction; 0 also fills the bounces after the last, so a LoS path is all zeros. A path takes about $1/(N_\mathrm{sym} N_\mathrm{sc})$ of the size of its channel's CFR, so the paths of a channel with few paths (in our runs, medians of 3--11) take a few percent of the CFR; with thousands of paths, as from diffuse scattering, they exceed it.
 
 \subsection{CFR from the Paths}
-CSIGen computes the saved CFR from these arrays, in float64, with \texttt{cfr\_from\_paths} (\texttt{src.path\_data}), for every antenna pair:
+CSIGen computes the saved CFR from these arrays, in float64, with \texttt{cfr\_from\_paths} (\texttt{csigen.path\_data}), for every antenna pair:
 \[
 h(f, t) = \sum_{l} a_l \, e^{-j 2\pi (f_\mathrm{c} + f) \tau_l} \, e^{j 2\pi \nu_l t},
 \]
 with carrier frequency $f_\mathrm{c}$, subcarrier offsets $f$, time $t = n T$ of OFDM symbol $n$ (symbol duration $T = 1/\Delta f$ for subcarrier spacing $\Delta f$), delay $\tau_l$ and Doppler shift $\nu_l$. This is the formula of Sionna's \texttt{Paths.cfr}. \key{cfr\_normalize\_delays} first subtracts the earliest delay of each channel; \key{cfr\_normalize} scales each channel to unit average energy. The parameters are saved as \texttt{cfr\_params}.
 
-Sionna computes the carrier phase $2\pi f_\mathrm{c} \tau_l$ in float32, so the CSIGen CFR differs from Sionna's by about 1\% at 28\,GHz and 0.1\% at 3.5\,GHz. Neither is more accurate, because the delays themselves are float32; the float64 computation makes the CFR exactly reproducible from the saved paths.
+Sionna computes the carrier phase $2\pi f_\mathrm{c} \tau_l$ in float32, so the CSIGen CFR differs from Sionna's by about 1\% at 28\,GHz and 0.1\% at 3.5\,GHz. Neither is more accurate, because the delays themselves are float32; the float64 computation makes the CFR reproducible from the saved paths.
 
 \subsection{Rebuilding and Modifying the CFR}
-\texttt{load\_cfr(file)} returns the file's \texttt{h} bit for bit. It needs only NumPy, not Sionna RT or a GPU, so a dataset of path data can be used on any machine. Its arguments change the CFR without new ray tracing:
+\texttt{load\_cfr(file)} returns the file's \texttt{h} bit for bit with the NumPy version and the CPU type that saved the file. With another NumPy version or CPU, it can differ in the last bits. It needs only NumPy, not Sionna RT or a GPU, so a dataset of path data can be used on any machine. Its arguments change the CFR without new ray tracing:
 \begin{description}
   \item[Numerology.] \texttt{num\_subcarriers}, \texttt{subcarrier\_spacing}, \texttt{num\_ofdm\_symbols}, \texttt{normalize\_delays}, \texttt{normalize}, and \texttt{symbol\_duration} $T$, for example $1.07/\Delta f$ for a 7\% cyclic prefix.
   \item[Arrays.] \texttt{tx\_array} and \texttt{rx\_array} change \texttt{num\_rows}, \texttt{num\_cols}, \texttt{vertical\_spacing} or \texttt{horizontal\_spacing} (\texttt{retarget\_arrays}). With a synthetic array, the coefficient of an antenna pair is the centre coefficient times a plane-wave phase, $a_{l,mn} = a_l e^{j 2\pi (\mathbf{r}^\mathrm{rx}_m \cdot \hat{\mathbf{k}}^\mathrm{r}_l + \mathbf{r}^\mathrm{tx}_n \cdot \hat{\mathbf{k}}^\mathrm{t}_l)/\lambda}$, with element positions $\mathbf{r}$ rotated by \texttt{tx\_orientation} and \texttt{rx\_orientations} and the directions $\hat{\mathbf{k}}$ of departure and arrival. The centre coefficient is recovered from \texttt{paths\_a} and the phases of the new arrays applied. The element pattern, polarization and orientation cannot change, since the coefficients include them.
@@ -342,7 +343,7 @@ Sionna computes the carrier phase $2\pi f_\mathrm{c} \tau_l$ in float32, so the 
 \end{description}
 The array and velocity changes match new Sionna solves with the new settings to about $10^{-6}$ whenever the solves find the same paths.
 \begin{minted}{python}
-from src.path_data import load_cfr
+from csigen.path_data import load_cfr
 f = "output/la_1/<run_id>/channel_tx_0.npz"
 h = load_cfr(f)                                        # the saved h
 h_64 = load_cfr(f, num_subcarriers=64)                 # 64 subcarriers
@@ -367,9 +368,9 @@ The metadata \texttt{path\_stats} holds per-row arrays computed from all paths, 
 \clearpage
 \section{Train/Test Splits}
 \label{sec:splits}
-Each row of a file is the channel between one sector and one user, and with \key{path\_solver\_per\_tx\_users\_only: false} each user appears in every sector's file. \texttt{scripts/split\_dataset.py} assigns every channel to train, to test or to neither, so that train and test share no users, no sectors, or neither:
+Each row of a file is the channel between one sector and one user, and with \key{path\_solver\_per\_tx\_users\_only: false} each user appears in every sector's file. The command \texttt{csigen-split} assigns every channel to train, to test or to neither, so that train and test share no users, no sectors, or neither:
 \begin{minted}{bash}
-python scripts/split_dataset.py --run output/<scene_name>/<run_id> --out <out_dir> --by bs --test-ratio 0.2 --seed 1
+csigen-split --run output/<scene_name>/<run_id> --out <out_dir> --by bs --test-ratio 0.2 --seed 1
 \end{minted}
 
 \subsection{Methods}
@@ -383,7 +384,7 @@ python scripts/split_dataset.py --run output/<scene_name>/<run_id> --out <out_di
 \texttt{--disjoint-users} makes a \texttt{sector} or \texttt{bs} split give each user the side of the sector it was sampled for (\texttt{rx\_serving\_tx}) and drop its channels to the other side. For \texttt{users}, \texttt{sector} and \texttt{bs}, the number of test items is the rounded ratio times the number of positions, sectors or base stations, at least one and at most all but one; sectors without channels are not drawn. Users at the same position, which runs before CSIGen 0.3.0 can contain, stay on one side. \texttt{--seed} fixes all random choices.
 
 \subsection{Output}
-\texttt{<out\_dir>/train/} and \texttt{<out\_dir>/test/} are runs in the usual format. Every sector file is written on both sides, restricted to that side's rows (possibly none), together with its per-row metadata, path statistics and paths; \texttt{source\_rows} gives each row's index in the source file and \texttt{split\_side} the side. \texttt{users\_per\_tx} and \texttt{total\_users} are renamed to \texttt{source\_users\_per\_tx} and \texttt{source\_total\_users}, and \texttt{metadata.yaml} gets \texttt{num\_users}. Each side's \texttt{split.yaml} records the method and all parameters, the chosen sectors, base stations or blocks (as indices $[i, j]$ from \texttt{block\_origin}), the users dropped by the guard or for a shared position, the source run, the CSIGen version, git commit, command and time of the split, and the channel and user counts per side and per sector.
+\texttt{<out\_dir>/train/} and \texttt{<out\_dir>/test/} are runs in the usual format. Every sector file is written on both sides, restricted to that side's rows (possibly none), together with its per-row metadata, path statistics and paths; \texttt{source\_rows} gives each row's index in the source file and \texttt{split\_side} the side. \texttt{users\_per\_tx} and \texttt{total\_users} are renamed to \texttt{source\_users\_per\_tx} and \texttt{source\_total\_users}, and \texttt{metadata.yaml} gets \texttt{num\_users}. Each side's \texttt{split.yaml} records the method and all parameters, the chosen sectors, base stations or blocks (as indices $[i, j]$ from \texttt{block\_origin}), the users dropped by the guard or for a shared position, the source run, the CSIGen version, the git commit (only for an editable install from a clone, else null), the command and the time of the split, and the channel and user counts per side and per sector.
 
 \clearpage
 \section{Examples}

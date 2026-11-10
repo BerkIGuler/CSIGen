@@ -1,11 +1,13 @@
 """Synthetic path data and runs in the CSIGen file format, written without Sionna RT."""
 
+import shutil
+import sys
 from pathlib import Path
 
 import numpy as np
 import yaml
 
-from src.path_data import cfr_from_paths
+from csigen.path_data import cfr_from_paths
 
 REPO = Path(__file__).resolve().parents[1]
 CFR = {"carrier_frequency": 3.5e9, "num_subcarriers": 8, "num_ofdm_symbols": 3, "subcarrier_spacing": 30e3,
@@ -16,6 +18,13 @@ TX_ARRAY = {"num_rows": 1, "num_cols": NUM_TX_ANT, "num_polarizations": 1, "num_
             "vertical_spacing": 0.5, "horizontal_spacing": 0.5, "pattern": "iso", "polarization": "V"}
 RX_ARRAY = {"num_rows": 1, "num_cols": NUM_RX_ANT, "num_polarizations": 1, "num_ant": NUM_RX_ANT,
             "vertical_spacing": 0.5, "horizontal_spacing": 0.5, "pattern": "iso", "polarization": "V"}
+
+
+def command(name):
+    """A CSIGen command of the environment that runs the tests, else the one on the PATH."""
+    found = shutil.which(name, path=str(Path(sys.executable).parent)) or shutil.which(name)
+    assert found, f"the command {name} is not installed (pip install -e .)"
+    return found
 
 
 def element_phases(layout, theta, phi):

@@ -128,4 +128,4 @@ cfr_out_type: "numpy"  # Output backend (used only without a synthetic array)
 
 # Saved data
 save_paths: true  # Save the per-path data of every channel (needs a synthetic array)
-save_cfr: true  # Save the CFR h; if false, rebuild it from the paths with src.path_data.load_cfr
+save_cfr: true  # Save the CFR h; if false, rebuild it from the paths with csigen.path_data.load_cfr

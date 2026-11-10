@@ -8,8 +8,8 @@ import numpy as np
 from typing import Any, Dict, List, Tuple
 import logging
 
-from src.user_equipment import generate_ue_parameters
-from src.utils import get_tx_color, scene_digest
+from csigen.user_equipment import generate_ue_parameters
+from csigen.utils import get_tx_color, scene_digest
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ def load_receivers(run_dir) -> Dict[str, Any]:
         missing = [k for k in REPLAY_KEYS if k not in m]
         if missing:
             raise ValueError(f"{f} lacks {missing}: receivers_from needs a full run of CSIGen 0.3.3 or later "
-                             f"(not the output of split_dataset.py)")
+                             f"(not the output of csigen-split)")
         first = first or m
         for k in REPLAY_RUN_KEYS:
             if list(np.atleast_1d(m[k])) != list(np.atleast_1d(first[k])):

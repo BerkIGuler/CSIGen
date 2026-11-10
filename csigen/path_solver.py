@@ -11,7 +11,7 @@ import logging
 import drjit as dr
 import numpy as np
 
-from src.receivers import rx_names_for_tx
+from csigen.receivers import rx_names_for_tx
 
 logger = logging.getLogger(__name__)
 
