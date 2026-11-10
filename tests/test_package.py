@@ -2,22 +2,24 @@ import re
 import subprocess
 import sys
 
-from helpers import REPO
+import pytest
+
+from helpers import REPO, command
 
 # Packages of the ray tracing that the reading of saved data must not need
 HEAVY = ("sionna", "mitsuba", "drjit", "tensorflow", "matplotlib")
-# Modules of src that need only numpy, pyyaml and pydantic
-LIGHT_MODULES = ("src.path_data", "src.split", "src.config_validator")
+# Modules of csigen that need only numpy, pyyaml and pydantic
+LIGHT_MODULES = ("csigen.path_data", "csigen.split", "csigen.config_validator")
 
 NO_HEAVY = f"""
 import sys
 for name in {HEAVY!r}:
     sys.modules[name] = None        # any import of these raises ImportError
-import src
-from src import load_cfr, validate_config, path_stats
-from src.split import write_split
+import csigen
+from csigen import load_cfr, validate_config, path_stats
+from csigen.split import write_split
 try:
-    src.generate_channels
+    csigen.generate_channels
 except AttributeError as err:
     assert "needs a package that is not installed" in str(err)
 else:
@@ -32,15 +34,30 @@ def test_saved_data_and_configs_work_without_sionna():
     assert out.stdout.strip() == "ok"
 
 
+@pytest.mark.parametrize("main", ["run_main", "split_main"])
+def test_command_help_works_without_sionna(main):
+    code = (f"import sys\nfor name in {HEAVY!r}:\n    sys.modules[name] = None\n"
+            f"from csigen.cli import {main}\n{main}(['--help'])")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert "--" in out.stdout
+
+
+def test_commands_are_installed():
+    for name in ("csigen-run", "csigen-split"):
+        out = subprocess.run([command(name), "--help"], capture_output=True, text=True)
+        assert out.returncode == 0, out.stderr
+
+
 def test_light_exports_resolve():
-    import src
-    for name, module in src._EXPORTS.items():
+    import csigen
+    for name, module in csigen._EXPORTS.items():
         if module in LIGHT_MODULES:
-            assert getattr(src, name).__module__ == module
+            assert getattr(csigen, name).__module__ == module
 
 
 def test_version_matches_the_changelog():
-    import src
+    import csigen
     first = re.search(r"^## \[(\d+\.\d+\.\d+)\]", (REPO / "docs" / "changelog.md").read_text(), re.M)
     assert first, "docs/changelog.md has no section '## [X.Y.Z] - date'"
-    assert src.__version__ == first.group(1)
+    assert csigen.__version__ == first.group(1)

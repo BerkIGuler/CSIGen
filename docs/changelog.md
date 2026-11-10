@@ -2,6 +2,14 @@
 
 All notable changes to CSIGen are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-11-04
+
+### Changed
+
+- **The package is now `csigen`.** The package `src` is renamed to `csigen`, so that CSIGen can be installed next to other packages. Change the imports in your code. For example, change `from src.path_data import load_cfr` to `from csigen.path_data import load_cfr`, and `import src` to `import csigen`. The names that the package exports and its submodules do not change. The log lines of the modules now show `csigen.<module>` instead of `src.<module>`.
+- **Install with pip.** `pyproject.toml` replaces `requirements.txt`. Run `pip install -e .` in the clone for the light install. It has NumPy, PyYAML and pydantic, which are enough to read saved path data with `load_cfr`, to validate configs and to split runs. Add the extra `rt` for channel generation (`pip install -e ".[rt]"`). It installs Sionna RT 2.2.0, Mitsuba 3.9.1 and matplotlib. The extra `test` adds pytest, and the extra `examples` adds Jupyter and matplotlib for the notebooks. The notebooks that use Sionna RT also need the extra `rt`. CSIGen needs Python 3.12 or later and is tested with the versions in the README. You no longer need to run from the repository root or to add it to `sys.path` to import the package.
+- **Commands instead of scripts.** `scripts/run.py` and `scripts/split_dataset.py` are removed. The install adds the commands `csigen-run` and `csigen-split`, with the same arguments and the same outputs. Change `python scripts/run.py --config <config>` to `csigen-run --config <config>`, and `python scripts/split_dataset.py <arguments>` to `csigen-split <arguments>`. Run `csigen-run` from the repository root as before, because the example configs give the scene files relative to it, and the run goes to `output/` in the working directory. In `split.yaml`, the command is now recorded as `csigen-split` followed by its arguments, and the git commit of CSIGen only with an editable install from a clone (`pip install -e`).
+
 ## [0.4.2] - 2026-11-02
 
 ### Fixed

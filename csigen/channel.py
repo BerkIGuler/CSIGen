@@ -125,7 +125,7 @@ def save_channel_data(
     metadata : dict, optional
         Optional metadata dict to save alongside data
     path_data : dict, optional
-        The paths_* arrays (see src.path_data), saved as top-level keys
+        The paths_* arrays (see csigen.path_data), saved as top-level keys
     """
     output_path = Path(output_path)
     

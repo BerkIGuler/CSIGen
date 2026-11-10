@@ -11,27 +11,27 @@ from typing import Dict, Iterator, Any
 
 import numpy as np
 
-from src.scene_setup import setup_scene
-from src.base_station import set_tx_antenna_array, add_base_station
-from src.user_equipment import set_rx_antenna_array
-from src.radio_map import solve_radio_map, sample_user_positions, filter_positions_by_edge_distance
-from src.receivers import (
+from csigen.scene_setup import setup_scene
+from csigen.base_station import set_tx_antenna_array, add_base_station
+from csigen.user_equipment import set_rx_antenna_array
+from csigen.radio_map import solve_radio_map, sample_user_positions, filter_positions_by_edge_distance
+from csigen.receivers import (
     add_receivers_from_samples,
     add_receivers_from_run,
     check_replay_base_stations,
     load_receivers,
     rx_names_for_tx,
 )
-from src.path_solver import (
+from csigen.path_solver import (
     iter_paths_for_receivers,
     set_specular_chain_table_size,
     get_valid_rx_mask,
     get_rx_los_nlos_mask,
     _compute_rx_valid_and_los_masks,
 )
-from src.channel import compute_cfr_for_paths
-from src.utils import scene_digest
-from src.path_data import (
+from csigen.channel import compute_cfr_for_paths
+from csigen.utils import scene_digest
+from csigen.path_data import (
     extract_path_data,
     concat_path_data,
     empty_path_data,
@@ -135,7 +135,7 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
         - 'tx_name': str
         - 'h_tx': np.ndarray (CFR for this TX; only valid channels), or None
           if save_cfr is false
-        - 'path_data': dict of the paths_* arrays (see src.path_data), or None
+        - 'path_data': dict of the paths_* arrays (see csigen.path_data), or None
           if save_paths is false
         - 'tx_metadata': dict with TX/RX positions, global config-derived info,
           and per-channel metadata such as a LOS/NLOS indicator array
@@ -460,7 +460,7 @@ def generate_channels(config: Dict) -> Iterator[Dict[str, Any]]:
             'tx_array': array_layout(config, 'tx', scene.tx_array.num_ant),
             'rx_array': array_layout(config, 'rx', scene.rx_array.num_ant),
             'config': config,
-            # SHA-256 of the scene XML and the files it references (src.utils.scene_digest)
+            # SHA-256 of the scene XML and the files it references (csigen.utils.scene_digest)
             'scene_sha256': scene_sha256,
         }
 

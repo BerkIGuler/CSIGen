@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from helpers import CFR, NUM_RX_ANT, NUM_TX_ANT, RX_ARRAY, TX_ARRAY, random_paths
-from src import path_data
-from src.path_data import (PATH_KEYS, cfr_from_paths, load_cfr, path_stats, retarget_arrays, retarget_velocities,
+from csigen import path_data
+from csigen.path_data import (PATH_KEYS, cfr_from_paths, load_cfr, path_stats, retarget_arrays, retarget_velocities,
                            select_paths, slice_path_data, subcarrier_offsets)
 
 FC, K, T, SCS = CFR["carrier_frequency"], CFR["num_subcarriers"], CFR["num_ofdm_symbols"], CFR["subcarrier_spacing"]

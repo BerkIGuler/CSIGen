@@ -16,16 +16,18 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # The tested versions of the README, and the newest versions that pip resolves
+        pins: ["numpy==2.5.3 PyYAML==6.0.3 pydantic==2.14.0", ""]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
-      # The tests read saved data and configs, which need neither Sionna RT nor a GPU.
-      # Install only those packages, at the versions of requirements.txt, and stop if one is missing there.
-      - run: |
-          pins=$(grep -E '^(numpy|PyYAML|pydantic)==' requirements.txt || true)
-          [ "$(echo "$pins" | wc -l)" -eq 3 ] || { echo "requirements.txt must pin numpy, PyYAML and pydantic"; exit 1; }
-          pip install $pins "pytest>=8,<9"
+          cache-dependency-path: pyproject.toml
+      # The tests read saved data and configs, which need neither Sionna RT nor a GPU, so the base install is enough
+      - run: pip install -e ".[test]" ${{ matrix.pins }}
       - run: pytest
